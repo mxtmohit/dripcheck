@@ -261,10 +261,11 @@ parts: [
 { inlineData: { mimeType: "image/jpeg", data: overlayImage } },
 
 {
-  text: `Take the ${finalItemType} from the second image and apply it to the person in the first image. 
-The ${finalItemType} must fit the body and pose naturally, with correct draping, proportions, lighting, and shadows that match the first image's environment. 
-The final result should be photorealistic, prioritizing a natural fit over preserving the source exactly. 
-The output must have the same aspect ratio as the first image and must not be cropped.`
+  text: `From the second image, take the ${finalItemType} and apply it to the person in the first image. 
+Replace the person’s existing outfit with the new ${finalItemType}, ensuring no parts of the previous outfit remain visible. 
+The ${finalItemType} must fit the body and pose naturally, with realistic draping, proportions, lighting, and shadows consistent with the first image’s environment. 
+The result should be seamless, photorealistic, and free of visual artifacts. 
+Maintain the same aspect ratio as the first input image, with no cropping.`
 },
 
 ],
