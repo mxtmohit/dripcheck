@@ -258,7 +258,7 @@ parts: [
 
 {
 
-text: `From the second image, take only the main ${itemType} and have the person in the first image wear it. The final result should be photorealistic. The ${itemType} should fit the person's body and pose naturally, with correct draping, lighting, and shadows that match the original photo's environment. Prioritize a realistic fit over keeping the original image completely unchanged. The output image must have the exact same ratio as the first input image and must not be cropped.`,
+text: `From the second image, take only the main ${itemType} and have the person in the first image wear it. The final result should be photorealistic. The ${itemType} should fit the person's body and pose naturally, with correct draping, lighting, and shadows that match the original photo's environment. Prioritize a realistic fit over keeping the original image completely unchanged,REPLACE THE CLOTHES OR OTHER ACCESSORIES IN THE FIRST IMAGE WITH THE SECOND IMAGE BASICALLY. The output image must have the exact same ratio as the first input image and must not be cropped.`,
 
 },
 
