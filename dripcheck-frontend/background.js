@@ -125,17 +125,19 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             const spinnerContainer = document.createElement('div');
             spinnerContainer.id = 'dripcheck-spinner-container';
             spinnerContainer.style.cssText = `
-              position: relative;
+              position: absolute;
+              top: 0;
+              left: 0;
               width: 100%;
               height: 100%;
               display: flex;
               flex-direction: column;
               align-items: center;
               justify-content: center;
-              background: #f8fafc;
-              border: 2px solid #e2e8f0;
-              border-radius: 8px;
-              min-height: 100px;
+              background: rgba(248, 250, 252, 0.95);
+              backdrop-filter: blur(2px);
+              z-index: 1000;
+              border-radius: 4px;
             `;
             
             const spinner = document.createElement('div');
@@ -174,10 +176,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             spinnerContainer.appendChild(spinner);
             spinnerContainer.appendChild(aiText);
             
-            // Replace image with spinner
-            targetImg.style.display = 'none';
-            targetImg.parentNode.insertBefore(spinnerContainer, targetImg);
+            // Make image container relative positioned for absolute spinner
+            const imgParent = targetImg.parentElement;
+            if (imgParent) {
+              const computedStyle = window.getComputedStyle(imgParent);
+              if (computedStyle.position === 'static') {
+                imgParent.style.position = 'relative';
+              }
+            }
+            
+            // Add spinner overlay on top of image
             targetImg.setAttribute('data-spinner-active', 'true');
+            targetImg.parentNode.appendChild(spinnerContainer);
           }
         },
         args: [imageUrl]
@@ -198,25 +208,28 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     const { authToken } = await chrome.storage.local.get(['authToken']);
     
     if (!authToken) {
-                chrome.scripting.executeScript({
-        target: { tabId: tabId },
-                  func: () => {
-          // Remove spinner if it exists
-          const spinnerContainer = document.getElementById('dripcheck-spinner-container');
-          if (spinnerContainer) {
-            spinnerContainer.remove();
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: () => {
+            // Remove spinner if it exists
+            const spinnerContainer = document.getElementById('dripcheck-spinner-container');
+            if (spinnerContainer) {
+              spinnerContainer.remove();
+            }
+            
+            // Clean up any position changes we made
+            const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
+            imgs.forEach(img => {
+              const imgParent = img.parentElement;
+              if (imgParent && imgParent.style.position === 'relative') {
+                imgParent.style.position = '';
+              }
+              img.removeAttribute('data-spinner-active');
+            });
+            
+            alert('Please login to use the extension. Open the extension popup to login.');
           }
-          
-          // Show the image again
-          const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
-          imgs.forEach(img => {
-            img.style.display = '';
-            img.removeAttribute('data-spinner-active');
-          });
-          
-          alert('Please login to use the extension. Open the extension popup to login.');
-        }
-      });
+        });
       return;
     }
     
@@ -245,10 +258,13 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
               spinnerContainer.remove();
             }
             
-            // Show the image again
+            // Clean up any position changes we made
             const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
             imgs.forEach(img => {
-              img.style.display = '';
+              const imgParent = img.parentElement;
+              if (imgParent && imgParent.style.position === 'relative') {
+                imgParent.style.position = '';
+              }
               img.removeAttribute('data-spinner-active');
             });
             
@@ -273,10 +289,13 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
               spinnerContainer.remove();
             }
             
-            // Show the image again
+            // Clean up any position changes we made
             const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
             imgs.forEach(img => {
-              img.style.display = '';
+              const imgParent = img.parentElement;
+              if (imgParent && imgParent.style.position === 'relative') {
+                imgParent.style.position = '';
+              }
               img.removeAttribute('data-spinner-active');
             });
             
@@ -356,8 +375,14 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
             spinnerContainer.remove();
           }
           
+          // Clean up any position changes we made
+          const imgParent = targetImg.parentElement;
+          if (imgParent && imgParent.style.position === 'relative') {
+            // Only reset if we set it to relative
+            imgParent.style.position = '';
+          }
+          
           // Show the image again
-          targetImg.style.display = '';
           targetImg.removeAttribute('data-spinner-active');
           
           // Prevent site-provided responsive sources from swapping our image
@@ -459,26 +484,29 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     console.error('Backend request failed:', error);
     
     // Remove loading indicator and show error
-    chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: (errorMsg) => {
-        // Remove spinner if it exists
-        const spinnerContainer = document.getElementById('dripcheck-spinner-container');
-        if (spinnerContainer) {
-          spinnerContainer.remove();
-        }
-        
-        // Show the image again
-        const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
-        imgs.forEach(img => {
-          img.style.display = '';
-          img.removeAttribute('data-spinner-active');
-        });
-        
-        alert('Failed to process image: ' + errorMsg);
-      },
-      args: [error.message]
-    });
+     chrome.scripting.executeScript({
+       target: { tabId: tabId },
+       func: (errorMsg) => {
+         // Remove spinner if it exists
+         const spinnerContainer = document.getElementById('dripcheck-spinner-container');
+         if (spinnerContainer) {
+           spinnerContainer.remove();
+         }
+         
+         // Clean up any position changes we made
+         const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
+         imgs.forEach(img => {
+           const imgParent = img.parentElement;
+           if (imgParent && imgParent.style.position === 'relative') {
+             imgParent.style.position = '';
+           }
+           img.removeAttribute('data-spinner-active');
+         });
+         
+         alert('Failed to process image: ' + errorMsg);
+       },
+       args: [error.message]
+     });
   }
 }
 

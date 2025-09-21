@@ -29,7 +29,11 @@ const userSchema = new mongoose.Schema({
   lastLogin: {
     type: Date,
     default: Date.now
-  }
+  },
+  usedCoupons: [{
+    type: String,
+    ref: 'Coupon'
+  }]
 }, {
   timestamps: true
 });

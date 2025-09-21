@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import dotenv from "dotenv";
 import User from "./models/User.js";
+import Coupon from "./models/Coupon.js";
 import { authenticateToken, generateToken } from "./middleware/auth.js";
 
 dotenv.config();
@@ -332,6 +333,53 @@ res.status(500).json({ error: "Failed to generate image", details: err.message }
 
 });
 
+
+// Coupon redemption endpoint
+app.post('/api/redeem-coupon', authenticateToken, async (req, res) => {
+  try {
+    const { couponCode } = req.body;
+    
+    if (!couponCode) {
+      return res.status(400).json({ error: 'Coupon code is required' });
+    }
+
+    // Find the coupon
+    const coupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
+    
+    if (!coupon) {
+      return res.status(404).json({ error: 'Invalid coupon code' });
+    }
+
+    // Check if coupon is valid
+    if (!coupon.isValid()) {
+      return res.status(400).json({ error: 'Coupon has expired or reached maximum uses' });
+    }
+
+    // Check if user already used this coupon
+    if (req.user.usedCoupons.includes(coupon._id.toString())) {
+      return res.status(400).json({ error: 'You have already used this coupon' });
+    }
+
+    // Add tokens to user
+    await User.findByIdAndUpdate(req.user._id, {
+      $inc: { tokens: coupon.tokenAmount },
+      $push: { usedCoupons: coupon._id }
+    });
+
+    // Mark coupon as used
+    await coupon.use();
+
+    res.json({
+      message: 'Coupon redeemed successfully!',
+      tokensAdded: coupon.tokenAmount,
+      newTokenBalance: req.user.tokens + coupon.tokenAmount
+    });
+
+  } catch (error) {
+    console.error('Coupon redemption error:', error);
+    res.status(500).json({ error: 'Failed to redeem coupon' });
+  }
+});
 
 
 const PORT = process.env.PORT || 3000;

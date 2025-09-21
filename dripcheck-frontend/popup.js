@@ -21,6 +21,10 @@ const statusInfo = document.getElementById("statusInfo");
 const generatedSection = document.getElementById("generatedSection");
 const generatedPreview = document.getElementById("generatedPreview");
 const downloadBtn = document.getElementById("downloadBtn");
+const couponSection = document.getElementById("couponSection");
+const couponInput = document.getElementById("couponInput");
+const redeemBtn = document.getElementById("redeemBtn");
+const couponMessage = document.getElementById("couponMessage");
 
 // Authentication functions
 function showError(message) {
@@ -37,6 +41,9 @@ function showAuthSection(user) {
   mainSection.style.display = 'block';
   userName.textContent = user.username;
   tokenCount.textContent = user.tokens || 0;
+  
+  // Show coupon section
+  couponSection.style.display = 'block';
   
   // Show warning if user has no tokens
   if (user.tokens <= 0) {
@@ -147,6 +154,7 @@ function logout() {
     statusInfo.textContent = "📁 Upload an image to get started";
     statusInfo.style.color = "#6b7280";
     generatedSection.style.display = "none";
+    couponSection.style.display = "none";
     
     // Clear file input
     file.value = '';
@@ -156,6 +164,66 @@ function logout() {
     
     console.log('User logged out - all data cleared from Chrome storage');
   });
+}
+
+async function redeemCoupon() {
+  const couponCode = couponInput.value.trim();
+  
+  if (!couponCode) {
+    showCouponMessage('Please enter a coupon code', 'error');
+    return;
+  }
+  
+  try {
+    const { authToken } = await chrome.storage.local.get(['authToken']);
+    
+    if (!authToken) {
+      showCouponMessage('Please login first', 'error');
+      return;
+    }
+    
+    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/redeem-coupon', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ couponCode })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok) {
+      showCouponMessage(`✅ ${data.message} (+${data.tokensAdded} tokens)`, 'success');
+      couponInput.value = '';
+      
+      // Update user data
+      const { user } = await chrome.storage.local.get(['user']);
+      if (user) {
+        user.tokens = data.newTokenBalance;
+        chrome.storage.local.set({ user });
+        tokenCount.textContent = user.tokens;
+      }
+      
+      // Update status
+      if (user.tokens > 0) {
+        statusInfo.textContent = "✅ Ready to replace images";
+        statusInfo.style.color = "#6b7280";
+      }
+    } else {
+      showCouponMessage(`❌ ${data.error}`, 'error');
+    }
+  } catch (error) {
+    showCouponMessage('❌ Connection error', 'error');
+  }
+}
+
+function showCouponMessage(message, type) {
+  couponMessage.textContent = message;
+  couponMessage.style.color = type === 'success' ? '#10b981' : '#ef4444';
+  setTimeout(() => {
+    couponMessage.textContent = '';
+  }, 5000);
 }
 
 function render(enabled) {
@@ -222,6 +290,12 @@ chrome.storage.local.get({
 loginBtn.addEventListener("click", login);
 registerBtn.addEventListener("click", register);
 logoutBtn.addEventListener("click", logout);
+
+// Coupon event listeners
+redeemBtn.addEventListener("click", redeemCoupon);
+couponInput.addEventListener("keypress", (e) => {
+  if (e.key === 'Enter') redeemCoupon();
+});
 
 // Show/hide username field for registration
 registerBtn.addEventListener("mousedown", () => {

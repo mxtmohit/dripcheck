@@ -229,6 +229,8 @@ $RECYCLE.BIN/
 .Trash-*
 .nfs*
 
+
+*admin-dashboard
 # Project specific
 # Add any project-specific files or directories here
 # For example:
