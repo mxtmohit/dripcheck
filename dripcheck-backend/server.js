@@ -10,6 +10,7 @@ import { authenticateToken, generateToken } from "./middleware/auth.js";
 dotenv.config();
 
 const app = express();
+
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
@@ -25,6 +26,30 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dripcheck
 
 // Initialize Gemini using the new SDK and standard API_KEY
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// Health check endpoint for deployment platforms
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'DripCheck Backend API', 
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      register: 'POST /api/register',
+      login: 'POST /api/login',
+      profile: 'GET /api/profile',
+      generate: 'POST /generate'
+    }
+  });
+});
 
 // Authentication Routes
 app.post('/api/register', async (req, res) => {
@@ -309,4 +334,5 @@ res.status(500).json({ error: "Failed to generate image", details: err.message }
 
 
 
-app.listen(process.env.PORT || 3000, () => console.log("Backend running at http://localhost:3000"))
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`))
