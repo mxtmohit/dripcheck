@@ -161,7 +161,8 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 
 
 
-const itemType = "item,items, accessory, clothing, shoes, hat, glasses, mask, etc.";
+// Default item type if none specified
+const DEFAULT_ITEM_TYPE = "item,items, accessory, clothing, shoes, hat, glasses, mask, etc.";
 
 
 
@@ -210,11 +211,14 @@ try {
 
   console.log(`User ${req.user.username} has ${req.user.tokens} tokens, generating image...`);
 
-const { baseUrl, overlayUrl } = req.body;
+const { baseUrl, overlayUrl, itemType } = req.body;
 
 console.log("Base image type:", baseUrl.startsWith('data:') ? 'data URL' : 'URL');
-
 console.log("Overlay image type:", overlayUrl.startsWith('data:') ? 'data URL' : 'URL');
+console.log("Item type specified:", itemType || 'using default');
+
+// Use user-specified item type or fall back to default
+const finalItemType = itemType || DEFAULT_ITEM_TYPE;
 
 
 
@@ -257,9 +261,10 @@ parts: [
 { inlineData: { mimeType: "image/jpeg", data: overlayImage } },
 
 {
-
-text: `From the second image, take only the main ${itemType} and have the person in the first image wear it. The final result should be photorealistic. The ${itemType} should fit the person's body and pose naturally, with correct draping, lighting, and shadows that match the original photo's environment. Prioritize a realistic fit over keeping the original image completely unchanged,REPLACE THE CLOTHES OR OTHER ACCESSORIES IN THE FIRST IMAGE WITH THE SECOND IMAGE BASICALLY. The output image must have the exact same ratio as the first input image and must not be cropped.`,
-
+  text: `Take the ${finalItemType} from the second image and apply it to the person in the first image. 
+The ${finalItemType} must fit the body and pose naturally, with correct draping, proportions, lighting, and shadows that match the first image's environment. 
+The final result should be photorealistic, prioritizing a natural fit over preserving the source exactly. 
+The output must have the same aspect ratio as the first image and must not be cropped.`
 },
 
 ],
