@@ -220,7 +220,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
       return;
     }
     
-    const response = await fetch('http://localhost:3000/generate', {
+    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -304,7 +304,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     try {
       const { authToken } = await chrome.storage.local.get(['authToken']);
       if (authToken) {
-        const profileResponse = await fetch('http://localhost:3000/api/profile', {
+        const profileResponse = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/profile', {
           headers: { 'Authorization': `Bearer ${authToken}` }
         });
         if (profileResponse.ok) {

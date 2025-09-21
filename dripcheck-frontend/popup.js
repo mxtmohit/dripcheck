@@ -66,7 +66,7 @@ async function login() {
   }
   
   try {
-    const response = await fetch('http://localhost:3000/api/login', {
+    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -106,11 +106,13 @@ async function register() {
   }
   
   try {
-    const response = await fetch('http://localhost:3000/api/register', {
+    console.log('Registering user:', { email, username });
+    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, username })
     });
+    console.log('Register response status:', response.status);
     
     const data = await response.json();
     
