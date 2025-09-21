@@ -1,0 +1,312 @@
+import express from "express";
+import fetch from "node-fetch";
+import cors from "cors";
+import mongoose from "mongoose";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import dotenv from "dotenv";
+import User from "./models/User.js";
+import { authenticateToken, generateToken } from "./middleware/auth.js";
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "50mb" }));
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dripcheck', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('Connected to MongoDB'))
+.catch(err => console.error('MongoDB connection error:', err));
+
+
+
+// Initialize Gemini using the new SDK and standard API_KEY
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// Authentication Routes
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    // Validation
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      $or: [{ email }, { username }]
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists with this email or username' });
+    }
+
+    // Create new user
+    const user = new User({ username, email, password });
+    await user.save();
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      message: 'User created successfully',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check password
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        tokens: user.tokens
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.get('/api/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    res.json({
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        tokens: user.tokens,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    console.error('Profile error:', error);
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+
+
+const itemType = "item,items, accessory, clothing, shoes, hat, glasses, mask, etc.";
+
+
+
+// Helper: fetch image and convert to base64
+
+async function fetchImageAsBase64(url) {
+
+// Check if it's a data URL (base64)
+
+if (url.startsWith('data:')) {
+
+// Extract base64 data from data URL
+
+const base64Data = url.split(',')[1];
+
+return base64Data;
+
+}
+
+
+
+// Otherwise, fetch from URL
+
+const res = await fetch(url);
+
+if (!res.ok) {
+
+throw new Error(`Failed to fetch image: ${res.statusText}`);
+
+}
+
+const buffer = await res.arrayBuffer();
+
+return Buffer.from(buffer).toString("base64");
+
+}
+
+
+
+app.post("/generate", authenticateToken, async (req, res) => {
+try {
+  // Check if user has tokens
+  if (req.user.tokens <= 0) {
+    return res.status(402).json({ error: "No tokens remaining. Please purchase more tokens." });
+  }
+
+  console.log(`User ${req.user.username} has ${req.user.tokens} tokens, generating image...`);
+
+const { baseUrl, overlayUrl } = req.body;
+
+console.log("Base image type:", baseUrl.startsWith('data:') ? 'data URL' : 'URL');
+
+console.log("Overlay image type:", overlayUrl.startsWith('data:') ? 'data URL' : 'URL');
+
+
+
+if (!baseUrl || !overlayUrl) {
+
+console.log("Missing required parameters");
+
+return res.status(400).json({ error: "Missing base or overlay image URL" });
+
+}
+
+
+
+// Convert images to base64
+
+console.log("Fetching base image...");
+
+const baseImage = await fetchImageAsBase64(baseUrl);
+
+console.log("Fetching overlay image...");
+
+const overlayImage = await fetchImageAsBase64(overlayUrl);
+
+
+
+// Updated request to Gemini using the new API structure
+
+console.log("Sending request to Gemini AI...");
+
+const result = await ai.models.generateContent({
+
+model: 'gemini-2.5-flash-image-preview',
+
+contents: {
+
+parts: [
+
+{ inlineData: { mimeType: "image/jpeg", data: baseImage } },
+
+{ inlineData: { mimeType: "image/jpeg", data: overlayImage } },
+
+{
+
+text: `From the second image, take only the main ${itemType} and have the person in the first image wear it. The final result should be photorealistic. The ${itemType} should fit the person's body and pose naturally, with correct draping, lighting, and shadows that match the original photo's environment. Prioritize a realistic fit over keeping the original image completely unchanged. The output image must have the exact same ratio as the first input image and must not be cropped.`,
+
+},
+
+],
+
+},
+
+});
+
+console.log("Gemini AI response received");
+
+
+
+// Robustly extract image (base64) from the new response format
+
+let imageBase64;
+
+if (result.candidates && result.candidates.length > 0) {
+
+for (const part of result.candidates[0].content.parts) {
+
+if (part.inlineData) {
+
+imageBase64 = part.inlineData.data;
+
+break;
+
+}
+
+}
+
+}
+
+
+
+
+
+if (!imageBase64) {
+
+// Log the full response for debugging if no image is found
+
+console.error("Gemini response did not contain an image:", JSON.stringify(result, null, 2));
+
+return res.status(500).json({ error: "No image generated by Gemini" });
+
+}
+
+
+
+// Deduct one token from user
+try {
+  await User.findByIdAndUpdate(req.user._id, {
+    $inc: { tokens: -1 }
+  });
+  console.log(`User ${req.user.username} token deducted. Remaining tokens: ${req.user.tokens - 1}`);
+} catch (userError) {
+  console.error('Error updating user tokens:', userError);
+  // Don't fail the request if token update fails
+}
+
+res.json({ generatedImage: `data:image/jpeg;base64,${imageBase64}` });
+
+console.log("Image generated successfully, sending response to extension");
+
+} catch (err) {
+
+console.error("Error during image generation:", err);
+
+res.status(500).json({ error: "Failed to generate image", details: err.message });
+
+}
+
+});
+
+
+
+app.listen(process.env.PORT || 3000, () => console.log("Backend running at http://localhost:3000"))

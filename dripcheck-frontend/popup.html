@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Toggle</title>
+    <meta charset="utf-8">
+    <style>
+      body { 
+        margin: 0; 
+        padding: 20px; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #fafafa;
+        min-width: 280px;
+      }
+      #btn { 
+        width: 100%; 
+        height: 48px; 
+        font-size: 16px; 
+        font-weight: 600; 
+        cursor: pointer; 
+        border: none; 
+        border-radius: 8px; 
+        transition: all 0.2s ease;
+        margin-bottom: 16px;
+      }
+      #btn.on { background: #10b981; color: #fff; }
+      #btn.off { background: #ef4444; color: #fff; }
+      #btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+      
+      .section { 
+        background: white; 
+        border-radius: 12px; 
+        padding: 16px; 
+        margin-bottom: 12px; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+      
+      input[type="file"], input[type="email"], input[type="password"], input[type="text"] {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.2s ease;
+        box-sizing: border-box;
+        margin-bottom: 8px;
+      }
+      
+      input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+      }
+      
+      .btn-group {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      
+      .btn {
+        flex: 1;
+        height: 40px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .btn-primary { background: #3b82f6; color: white; }
+      .btn-success { background: #10b981; color: white; }
+      .btn-danger { background: #ef4444; color: white; }
+      
+      .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+      
+      .error-message {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      
+      .user-info {
+        text-align: center;
+        padding: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 8px;
+        margin-bottom: 16px;
+      }
+      
+      .user-info h3 {
+        margin: 0 0 4px 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      
+      .user-info .tokens {
+        font-size: 12px;
+        opacity: 0.9;
+      }
+      
+      .image-preview {
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+      
+      .status-text {
+        font-size: 12px;
+        color: #6b7280;
+        text-align: center;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Authentication Section -->
+    <div id="authSection" style="display:none;">
+      <div class="user-info">
+        <h3>Welcome, <span id="userName"></span>!</h3>
+        <div class="tokens">Tokens: <span id="tokenCount">0</span></div>
+      </div>
+      <button id="logoutBtn" class="btn btn-danger">Logout</button>
+    </div>
+
+    <!-- Login/Register Section -->
+    <div id="loginSection" class="section">
+      <input id="emailInput" type="email" placeholder="Email">
+      <input id="passwordInput" type="password" placeholder="Password">
+      <input id="usernameInput" type="text" placeholder="Username (register only)" style="display:none;">
+      
+      <div class="btn-group">
+        <button id="loginBtn" class="btn btn-primary">Login</button>
+        <button id="registerBtn" class="btn btn-success">Register</button>
+      </div>
+      
+      <div id="authError" class="error-message" style="display:none;"></div>
+    </div>
+
+    <!-- Main Extension Section -->
+    <div id="mainSection" style="display:none;">
+      <div class="section">
+        <button id="btn" class="off">Turn On Extension</button>
+        
+        <input id="file" type="file" accept="image/*">
+        
+        <div id="previewInfo" class="status-text"></div>
+        
+        <div class="image-preview">
+          <img id="imgPreview" alt="No image selected" style="display:block; width:100%; height:120px; object-fit:contain; background:#f8fafc; border:2px solid #e2e8f0; border-radius:8px;" />
+        </div>
+        
+        <div id="statusInfo" class="status-text"></div>
+    
+        <!-- Generated Image Section -->
+        <div id="generatedSection" style="display:none;">
+          <div style="font-size:14px; font-weight:600; color:#374151; margin-bottom:8px;">Generated Image</div>
+          <div class="image-preview" style="position:relative;">
+            <img id="generatedPreview" alt="No generated image" style="display:block; width:100%; height:120px; object-fit:contain; background:#f8fafc; border:2px solid #e2e8f0; border-radius:8px;" />
+            <button id="downloadBtn" style="position:absolute; top:8px; right:8px; background:#10b981; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.15); transition: all 0.2s ease;">📥 Download</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
+
+

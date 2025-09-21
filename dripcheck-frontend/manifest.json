@@ -1,0 +1,13 @@
+{ 
+  "manifest_version": 3,
+  "name": "DripCheck - AI Image Replacer",
+  "version": "1.0",
+  "description": "Upload an image and right-click any webpage image to replace it with AI-generated content",
+  "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "DripCheck" },
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start" }
+  ]
+}
