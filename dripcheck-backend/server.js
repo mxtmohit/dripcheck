@@ -246,6 +246,14 @@ const overlayImage = await fetchImageAsBase64(overlayUrl);
 
 // Updated request to Gemini using the new API structure
 
+const finalprompt = `From the second image, take the ${finalItemType} and apply it to the person in the first image. 
+Replace the person’s existing ${finalItemType} with the new ${finalItemType}, ensuring no parts of the previous ${finalItemType} remain visible. 
+The ${finalItemType} must fit the body and pose naturally, with realistic draping, proportions, lighting, and shadows consistent with the first image’s environment. 
+The result should be seamless, photorealistic, and free of visual artifacts. 
+Maintain the same aspect ratio as the first input image, with no cropping.`
+
+console.log("Final prompt:", finalprompt);
+
 console.log("Sending request to Gemini AI...");
 
 const result = await ai.models.generateContent({
@@ -261,11 +269,7 @@ parts: [
 { inlineData: { mimeType: "image/jpeg", data: overlayImage } },
 
 {
-  text: `From the second image, take the ${finalItemType} and apply it to the person in the first image. 
-Replace the person’s existing outfit with the new ${finalItemType}, ensuring no parts of the previous ${finalItemType} remain visible. 
-The ${finalItemType} must fit the body and pose naturally, with realistic draping, proportions, lighting, and shadows consistent with the first image’s environment. 
-The result should be seamless, photorealistic, and free of visual artifacts. 
-Maintain the same aspect ratio as the first input image, with no cropping.`
+  text: finalprompt
 },
 
 ],

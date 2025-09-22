@@ -1,8 +1,11 @@
+// Import configuration
+importScripts('config.js');
+
 // Create/remove context menu based on toggle
 function refreshMenu(enabled) {
   chrome.contextMenus.removeAll(() => {
     if (enabled) {
-      chrome.contextMenus.create({ id: "replaceImage", title: "Replace this image", contexts: ["image"] });
+      chrome.contextMenus.create({ id: "replaceImage", title: "Try-On this item", contexts: ["image"] });
     }
   });
 }
@@ -97,31 +100,96 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         return;
       }
       
-      // Show loading spinner in place of the image
+      // Show loading indicators (both image-based and top-right fallback)
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: (imageUrl) => {
-          // Find the target image
+          // Add CSS animations first
+          if (!document.getElementById('dripcheck-spinner-styles')) {
+            const style = document.createElement('style');
+            style.id = 'dripcheck-spinner-styles';
+            style.textContent = `
+              @keyframes dripcheck-spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+              @keyframes dripcheck-pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+              }
+            `;
+            document.head.appendChild(style);
+          }
+          
+          // Create top-right fallback indicator (always show)
+          const topRightIndicator = document.createElement('div');
+          topRightIndicator.id = 'dripcheck-top-indicator';
+          topRightIndicator.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #3b82f6, #1e40af);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 999999;
+            box-shadow: 0 8px 32px rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: dripcheck-pulse 2s ease-in-out infinite;
+          `;
+          
+          const spinnerIcon = document.createElement('div');
+          spinnerIcon.style.cssText = `
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: dripcheck-spin 1s linear infinite;
+          `;
+          
+          const text = document.createElement('span');
+          text.textContent = 'DripCheck AI Generating...';
+          
+          topRightIndicator.appendChild(spinnerIcon);
+          topRightIndicator.appendChild(text);
+          document.body.appendChild(topRightIndicator);
+          
+          // Try to find and overlay spinner on the target image
           const imgs = document.querySelectorAll("img");
           let targetImg = null;
           
+          // More robust image finding logic
           for (let img of imgs) {
-            if (img.src === imageUrl || 
+            const imgSrc = img.src || img.currentSrc || img.getAttribute('src') || '';
+            const imgSrcset = img.srcset || '';
+            
+            if (imgSrc === imageUrl || 
                 img.currentSrc === imageUrl || 
-                img.srcset?.includes(imageUrl) ||
-                img.getAttribute('src') === imageUrl ||
-                img.src.includes(imageUrl) ||
-                imageUrl.includes(img.src)) {
+                imgSrcset.includes(imageUrl) ||
+                imgSrc.includes(imageUrl) ||
+                imageUrl.includes(imgSrc) ||
+                // Additional checks for different URL formats
+                decodeURIComponent(imgSrc) === decodeURIComponent(imageUrl) ||
+                imgSrc.replace(/[?#].*/, '') === imageUrl.replace(/[?#].*/, '')) {
               targetImg = img;
               break;
             }
           }
           
           if (targetImg) {
+            console.log('Found target image, adding overlay spinner');
+            
             // Store original image for restoration if needed
             targetImg.setAttribute('data-original-src', targetImg.src);
             
-            // Create clean loading spinner
+            // Create image overlay spinner
             const spinnerContainer = document.createElement('div');
             spinnerContainer.id = 'dripcheck-spinner-container';
             spinnerContainer.style.cssText = `
@@ -160,19 +228,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             `;
             aiText.textContent = 'AI Generating...';
             
-            // Add CSS animation
-            if (!document.getElementById('dripcheck-spinner-styles')) {
-              const style = document.createElement('style');
-              style.id = 'dripcheck-spinner-styles';
-              style.textContent = `
-                @keyframes dripcheck-spin {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(360deg); }
-                }
-              `;
-              document.head.appendChild(style);
-            }
-            
             spinnerContainer.appendChild(spinner);
             spinnerContainer.appendChild(aiText);
             
@@ -188,6 +243,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             // Add spinner overlay on top of image
             targetImg.setAttribute('data-spinner-active', 'true');
             targetImg.parentNode.appendChild(spinnerContainer);
+          } else {
+            console.log('Target image not found, using top-right indicator only');
           }
         },
         args: [imageUrl]
@@ -204,17 +261,22 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     console.log('Sending to backend - Base image (uploaded):', userImageDataUrl.substring(0, 50) + '...');
     console.log('Overlay image (webpage URL):', pageImageUrl);
     
-    // Get authentication token
-    const { authToken } = await chrome.storage.local.get(['authToken']);
+    // Get authentication token and item type
+    const { authToken, itemType } = await chrome.storage.local.get(['authToken', 'itemType']);
     
     if (!authToken) {
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: () => {
-            // Remove spinner if it exists
+            // Remove all loading indicators
             const spinnerContainer = document.getElementById('dripcheck-spinner-container');
             if (spinnerContainer) {
               spinnerContainer.remove();
+            }
+            
+            const topIndicator = document.getElementById('dripcheck-top-indicator');
+            if (topIndicator) {
+              topIndicator.remove();
             }
             
             // Clean up any position changes we made
@@ -233,7 +295,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
       return;
     }
     
-    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/generate', {
+    const response = await fetch(CONFIG.getApiUrl('GENERATE'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -241,7 +303,8 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
       },
       body: JSON.stringify({
         baseUrl: userImageDataUrl,    // Your uploaded image (base64 data URL) - this is the base
-        overlayUrl: pageImageUrl      // The webpage image URL - this is the overlay
+        overlayUrl: pageImageUrl,     // The webpage image URL - this is the overlay
+        itemType: itemType || null    // Optional item type override from user input
       })
     });
     
@@ -252,10 +315,15 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: () => {
-            // Remove spinner if it exists
+            // Remove all loading indicators
             const spinnerContainer = document.getElementById('dripcheck-spinner-container');
             if (spinnerContainer) {
               spinnerContainer.remove();
+            }
+            
+            const topIndicator = document.getElementById('dripcheck-top-indicator');
+            if (topIndicator) {
+              topIndicator.remove();
             }
             
             // Clean up any position changes we made
@@ -283,10 +351,15 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: () => {
-            // Remove spinner if it exists
+            // Remove all loading indicators
             const spinnerContainer = document.getElementById('dripcheck-spinner-container');
             if (spinnerContainer) {
               spinnerContainer.remove();
+            }
+            
+            const topIndicator = document.getElementById('dripcheck-top-indicator');
+            if (topIndicator) {
+              topIndicator.remove();
             }
             
             // Clean up any position changes we made
@@ -323,7 +396,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     try {
       const { authToken } = await chrome.storage.local.get(['authToken']);
       if (authToken) {
-        const profileResponse = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/profile', {
+        const profileResponse = await fetch(CONFIG.getApiUrl('PROFILE'), {
           headers: { 'Authorization': `Bearer ${authToken}` }
         });
         if (profileResponse.ok) {
@@ -369,10 +442,15 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
         if (targetImg) {
           console.log('Replacing image with generated result...');
           
-          // Remove spinner if it exists
+          // Remove all loading indicators
           const spinnerContainer = document.getElementById('dripcheck-spinner-container');
           if (spinnerContainer) {
             spinnerContainer.remove();
+          }
+          
+          const topIndicator = document.getElementById('dripcheck-top-indicator');
+          if (topIndicator) {
+            topIndicator.remove();
           }
           
           // Clean up any position changes we made
@@ -471,14 +549,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
       args: [result.generatedImage, pageImageUrl]
     });
     
-    // Remove loading indicator
-    chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: () => {
-        const loadingDiv = document.getElementById('dripcheck-loading');
-        if (loadingDiv) loadingDiv.remove();
-      }
-    });
+    // Loading indicators are already removed in the image replacement function
     
   } catch (error) {
     console.error('Backend request failed:', error);
@@ -487,10 +558,15 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
      chrome.scripting.executeScript({
        target: { tabId: tabId },
        func: (errorMsg) => {
-         // Remove spinner if it exists
+         // Remove all loading indicators
          const spinnerContainer = document.getElementById('dripcheck-spinner-container');
          if (spinnerContainer) {
            spinnerContainer.remove();
+         }
+         
+         const topIndicator = document.getElementById('dripcheck-top-indicator');
+         if (topIndicator) {
+           topIndicator.remove();
          }
          
          // Clean up any position changes we made

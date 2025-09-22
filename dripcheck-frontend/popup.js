@@ -25,42 +25,52 @@ const couponSection = document.getElementById("couponSection");
 const couponInput = document.getElementById("couponInput");
 const redeemBtn = document.getElementById("redeemBtn");
 const couponMessage = document.getElementById("couponMessage");
+const refreshBtn = document.getElementById("refreshBtn");
+const clearImagesBtn = document.getElementById("clearImagesBtn");
+const fileLabel = document.getElementById("fileLabel");
+const itemTypeInput = document.getElementById("itemTypeInput");
 
 // Authentication functions
 function showError(message) {
   authError.textContent = message;
-  authError.style.display = 'block';
+  authError.classList.remove('hidden');
   setTimeout(() => {
-    authError.style.display = 'none';
+    authError.classList.add('hidden');
   }, 5000);
 }
 
 function showAuthSection(user) {
-  authSection.style.display = 'block';
-  loginSection.style.display = 'none';
-  mainSection.style.display = 'block';
+  authSection.classList.remove('hidden');
+  loginSection.classList.add('hidden');
+  mainSection.classList.remove('hidden');
   userName.textContent = user.username;
   tokenCount.textContent = user.tokens || 0;
   
   // Show coupon section
-  couponSection.style.display = 'block';
+  couponSection.classList.remove('hidden');
+  
+  // Show logout button
+  document.querySelector('.logout-section').classList.remove('hidden');
   
   // Show warning if user has no tokens
   if (user.tokens <= 0) {
     statusInfo.textContent = "⚠️ No tokens remaining - purchase more to generate images";
-    statusInfo.style.color = "#ef4444";
+    statusInfo.style.color = "#dc2626";
   } else {
     statusInfo.style.color = "#6b7280";
   }
 }
 
 function showLoginSection() {
-  authSection.style.display = 'none';
-  loginSection.style.display = 'block';
-  mainSection.style.display = 'none';
+  authSection.classList.add('hidden');
+  loginSection.classList.remove('hidden');
+  mainSection.classList.add('hidden');
   emailInput.value = '';
   passwordInput.value = '';
   usernameInput.value = '';
+  
+  // Hide logout button
+  document.querySelector('.logout-section').classList.add('hidden');
 }
 
 async function login() {
@@ -73,7 +83,7 @@ async function login() {
   }
   
   try {
-    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/login', {
+    const response = await fetch(CONFIG.getApiUrl('LOGIN'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -114,7 +124,7 @@ async function register() {
   
   try {
     console.log('Registering user:', { email, username });
-    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/register', {
+    const response = await fetch(CONFIG.getApiUrl('REGISTER'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, username })
@@ -148,16 +158,19 @@ function logout() {
     'generatedImage'
   ], () => {
     // Reset UI elements
-    imgPreview.removeAttribute('src');
+    imgPreview.src = 'assets/placeholder.svg';
     imgPreview.alt = "No image selected";
     previewInfo.textContent = "No image selected";
     statusInfo.textContent = "📁 Upload an image to get started";
     statusInfo.style.color = "#6b7280";
-    generatedSection.style.display = "none";
-    couponSection.style.display = "none";
+    generatedSection.classList.add('hidden');
+    couponSection.classList.add('hidden');
+    clearImagesBtn.style.display = 'none';
     
     // Clear file input
     file.value = '';
+    fileLabel.textContent = '📁 Choose Image File';
+    fileLabel.classList.remove('has-file');
     
     // Show login section
     showLoginSection();
@@ -182,7 +195,7 @@ async function redeemCoupon() {
       return;
     }
     
-    const response = await fetch('https://dripcheckbackend-gp37sv5b.b4a.run/api/redeem-coupon', {
+    const response = await fetch(CONFIG.getApiUrl('REDEEM_COUPON'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -220,10 +233,132 @@ async function redeemCoupon() {
 
 function showCouponMessage(message, type) {
   couponMessage.textContent = message;
-  couponMessage.style.color = type === 'success' ? '#10b981' : '#ef4444';
+  couponMessage.style.color = type === 'success' ? '#059669' : '#dc2626';
   setTimeout(() => {
     couponMessage.textContent = '';
   }, 5000);
+}
+
+// Refresh user data from server
+async function refreshUserData(showFeedback = true) {
+  try {
+    const { authToken } = await chrome.storage.local.get(['authToken']);
+    
+    if (!authToken) {
+      if (showFeedback) {
+        showCouponMessage('❌ Please login first', 'error');
+      }
+      return false;
+    }
+    
+    // Show loading state
+    if (showFeedback && refreshBtn) {
+      refreshBtn.classList.add('loading');
+    }
+    
+    const response = await fetch(CONFIG.getApiUrl('PROFILE'), {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    
+    if (response.ok) {
+      const profileData = await response.json();
+      const updatedUser = profileData.user;
+      
+      // Get current user data to compare
+      const { user: currentUser } = await chrome.storage.local.get(['user']);
+      const oldTokens = currentUser?.tokens || 0;
+      const newTokens = updatedUser.tokens || 0;
+      
+      // Update stored user data
+      chrome.storage.local.set({ user: updatedUser });
+      
+      // Update UI
+      userName.textContent = updatedUser.username;
+      tokenCount.textContent = newTokens;
+      
+      // Update status based on token count
+      if (newTokens <= 0) {
+        statusInfo.textContent = "⚠️ No tokens remaining - purchase more to generate images";
+        statusInfo.style.color = "#dc2626";
+      } else {
+        statusInfo.textContent = "✅ Ready to replace images";
+        statusInfo.style.color = "#6b7280";
+      }
+      
+      // Show feedback if tokens changed
+      if (showFeedback && newTokens !== oldTokens) {
+        const tokenDiff = newTokens - oldTokens;
+        if (tokenDiff > 0) {
+          showCouponMessage(`✅ Tokens updated! (+${tokenDiff} tokens)`, 'success');
+        } else if (tokenDiff < 0) {
+          showCouponMessage(`ℹ️ Tokens updated (${tokenDiff} tokens)`, 'success');
+        }
+      } else if (showFeedback) {
+        showCouponMessage('✅ Token count refreshed', 'success');
+      }
+      
+      return true;
+    } else {
+      if (showFeedback) {
+        showCouponMessage('❌ Failed to refresh token count', 'error');
+      }
+      return false;
+    }
+  } catch (error) {
+    console.error('Error refreshing user data:', error);
+    if (showFeedback) {
+      showCouponMessage('❌ Connection error', 'error');
+    }
+    return false;
+  } finally {
+    // Remove loading state
+    if (refreshBtn) {
+      refreshBtn.classList.remove('loading');
+    }
+  }
+}
+
+// Clear all images (uploaded and generated)
+function clearAllImages() {
+  // Clear from Chrome storage
+  chrome.storage.local.remove(['userImage', 'generatedImage'], () => {
+    console.log('All images cleared from storage');
+  });
+  
+  // Reset UI elements
+  imgPreview.src = 'assets/placeholder.svg';
+  imgPreview.alt = "No image selected";
+  previewInfo.textContent = "No image selected";
+  statusInfo.textContent = "📁 Upload an image to get started";
+  statusInfo.style.color = "#6b7280";
+  
+  // Hide generated image section
+  generatedSection.classList.add('hidden');
+  
+  // Hide clear button
+  clearImagesBtn.style.display = 'none';
+  
+  // Clear file input
+  file.value = '';
+  fileLabel.textContent = '📁 Choose Image File';
+  fileLabel.classList.remove('has-file');
+  
+  // Clear item type input
+  itemTypeInput.value = '';
+  
+  // Show success message
+  showCouponMessage('✅ All images cleared', 'success');
+}
+
+// Update clear button visibility
+function updateClearButtonVisibility() {
+  chrome.storage.local.get(['userImage', 'generatedImage'], ({ userImage, generatedImage }) => {
+    if (userImage || generatedImage) {
+      clearImagesBtn.style.display = 'block';
+    } else {
+      clearImagesBtn.style.display = 'none';
+    }
+  });
 }
 
 function render(enabled) {
@@ -250,6 +385,8 @@ chrome.storage.local.get({
   // Check authentication status
   if (authToken && user) {
     showAuthSection(user);
+    // Auto-refresh user data when popup opens (silent refresh)
+    refreshUserData(false);
   } else {
     showLoginSection();
   }
@@ -263,17 +400,20 @@ chrome.storage.local.get({
     previewInfo.textContent = "Using uploaded image";
     statusInfo.textContent = "✅ Ready to replace images";
   } else {
-    imgPreview.removeAttribute('src');
+    imgPreview.src = 'assets/placeholder.svg';
     imgPreview.alt = "No image selected";
     previewInfo.textContent = "No image selected";
     statusInfo.textContent = "📁 Upload an image to get started";
   }
   
+  // Update clear button visibility
+  updateClearButtonVisibility();
+  
   // Handle generated image preview
   if (generatedImage) {
     generatedPreview.src = generatedImage;
     generatedPreview.alt = "Generated image";
-    generatedSection.style.display = "block";
+    generatedSection.classList.remove('hidden');
     statusInfo.textContent = "🎨 Generated image available";
     
     // Add debug info for generated image dimensions
@@ -282,7 +422,7 @@ chrome.storage.local.get({
       console.log('Generated image aspect ratio:', (this.naturalWidth / this.naturalHeight).toFixed(2));
     };
   } else {
-    generatedSection.style.display = "none";
+    generatedSection.classList.add('hidden');
   }
 });
 
@@ -290,6 +430,8 @@ chrome.storage.local.get({
 loginBtn.addEventListener("click", login);
 registerBtn.addEventListener("click", register);
 logoutBtn.addEventListener("click", logout);
+refreshBtn.addEventListener("click", () => refreshUserData(true));
+clearImagesBtn.addEventListener("click", clearAllImages);
 
 // Coupon event listeners
 redeemBtn.addEventListener("click", redeemCoupon);
@@ -297,13 +439,25 @@ couponInput.addEventListener("keypress", (e) => {
   if (e.key === 'Enter') redeemCoupon();
 });
 
+// Item type input listener
+itemTypeInput.addEventListener("input", (e) => {
+  const itemType = e.target.value.trim();
+  if (itemType) {
+    chrome.storage.local.set({ itemType: itemType });
+    console.log('Item type saved:', itemType);
+  } else {
+    chrome.storage.local.remove(['itemType']);
+    console.log('Item type cleared');
+  }
+});
+
 // Show/hide username field for registration
 registerBtn.addEventListener("mousedown", () => {
-  usernameInput.style.display = 'block';
+  usernameInput.classList.remove('hidden');
 });
 
 loginBtn.addEventListener("mousedown", () => {
-  usernameInput.style.display = 'none';
+  usernameInput.classList.add('hidden');
 });
 
 // Enter key support
@@ -329,7 +483,17 @@ btn.addEventListener("click", () => {
 
 file.addEventListener("change", () => {
   const f = file.files && file.files[0];
-  if (!f) return;
+  if (!f) {
+    // Reset label if no file selected
+    fileLabel.textContent = '📁 Choose Image File';
+    fileLabel.classList.remove('has-file');
+    return;
+  }
+  
+  // Update label to show file is selected
+  fileLabel.textContent = `✅ ${f.name}`;
+  fileLabel.classList.add('has-file');
+  
   const reader = new FileReader();
   reader.onload = () => {
     const dataUrl = reader.result;
@@ -339,7 +503,10 @@ file.addEventListener("change", () => {
       imgPreview.alt = "Uploaded image";
       previewInfo.textContent = "Image saved (" + Math.round((f.size/1024)) + " KB)";
       statusInfo.textContent = "✅ Ready to replace images";
-      generatedSection.style.display = "none";
+      generatedSection.classList.add('hidden');
+      
+      // Show clear button
+      clearImagesBtn.style.display = 'block';
     });
   };
   reader.readAsDataURL(f);
@@ -382,11 +549,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
       if (generatedImage) {
         generatedPreview.src = generatedImage;
         generatedPreview.alt = "Generated image";
-        generatedSection.style.display = "block";
+        generatedSection.classList.remove('hidden');
         statusInfo.textContent = "🎨 Generated image available";
         statusInfo.style.color = "#6b7280";
+        
+        // Show clear button
+        clearImagesBtn.style.display = 'block';
       } else {
-        generatedSection.style.display = "none";
+        generatedSection.classList.add('hidden');
       }
     }
     
@@ -400,11 +570,31 @@ chrome.storage.onChanged.addListener((changes, area) => {
         // Show warning if user has no tokens
         if (user.tokens <= 0) {
           statusInfo.textContent = "⚠️ No tokens remaining - purchase more to generate images";
-          statusInfo.style.color = "#ef4444";
+          statusInfo.style.color = "#dc2626";
         }
       }
     }
   }
+});
+
+// Initialize popup when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  // Set initial placeholder image
+  imgPreview.src = 'assets/placeholder.svg';
+  imgPreview.alt = "No image selected";
+  previewInfo.textContent = "No image selected";
+  statusInfo.textContent = "📁 Upload an image to get started";
+  statusInfo.style.color = "#6b7280";
+  
+  // Load saved item type
+  chrome.storage.local.get(['itemType'], ({ itemType }) => {
+    if (itemType) {
+      itemTypeInput.value = itemType;
+    }
+  });
+  
+  // Update clear button visibility
+  updateClearButtonVisibility();
 });
 
 

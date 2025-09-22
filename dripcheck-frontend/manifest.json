@@ -1,13 +1,28 @@
 { 
   "manifest_version": 3,
-  "name": "DripCheck - AI Image Replacer",
+  "name": "DripCheck - Ai try on",
   "version": "1.0",
-  "description": "Upload an image and right-click any webpage image to replace it with AI-generated content",
+  "description": "virtual try on clothes and accessories with AI realistic",
   "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html", "default_title": "DripCheck" },
+  "action": { 
+    "default_popup": "popup.html", 
+    "default_title": "DripCheck",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
   "content_scripts": [
-    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start" }
+    { "matches": ["<all_urls>"], "js": ["config.js", "content.js"], "run_at": "document_start" }
   ]
 }

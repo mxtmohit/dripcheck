@@ -50,3 +50,5 @@ couponSchema.methods.use = function() {
 };
 
 export default mongoose.model('Coupon', couponSchema);
+
+
