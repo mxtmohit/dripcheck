@@ -6,11 +6,13 @@ import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import dotenv from "dotenv";
 import User from "./models/User.js";
 import Coupon from "./models/Coupon.js";
+import Feedback from "./models/Feedback.js";
 import { authenticateToken, generateToken } from "./middleware/auth.js";
 
 dotenv.config();
 
 const app = express();
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -36,6 +38,77 @@ app.get('/health', (req, res) => {
     uptime: process.uptime()
   });
 });
+// Google OAuth helpers
+function buildGoogleAuthUrl(redirectUri, state = '', nonce = '') {
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'token id_token',
+    scope: 'openid email',
+    prompt: 'consent',
+    state,
+    nonce
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function decodeIdToken(idToken) {
+  const payload = idToken.split('.')[1];
+  const json = Buffer.from(payload, 'base64').toString('utf8');
+  return JSON.parse(json);
+}
+
+// API to get Google auth URL
+app.get('/api/google/auth-url', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).json({ error: 'Google OAuth not configured' });
+  const { redirectUri, state, nonce } = req.query;
+  if (!redirectUri) return res.status(400).json({ error: 'redirectUri required' });
+  const url = buildGoogleAuthUrl(redirectUri, state || '', nonce || '');
+  res.json({ url });
+});
+
+// Verify Google user info and return our JWT
+app.post('/api/google/verify', async (req, res) => {
+  try {
+    const { email, name, picture, googleId } = req.body;
+    if (!email) return res.status(400).json({ error: 'Missing email' });
+    
+    const username = name || email.split('@')[0];
+    
+    // Upsert user by email
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = new User({ 
+        username, 
+        email, 
+        password: Math.random().toString(36).slice(2),
+        googleId: googleId || null
+      });
+      await user.save();
+    } else {
+      // Update existing user with Google ID if not set
+      if (!user.googleId && googleId) {
+        user.googleId = googleId;
+        await user.save();
+      }
+    }
+    
+    // Issue our JWT
+    const token = generateToken(user._id);
+    res.json({ 
+      token, 
+      user: { 
+        id: user._id, 
+        username: user.username, 
+        email: user.email, 
+        tokens: user.tokens 
+      } 
+    });
+  } catch (err) {
+    console.error('Google verify failed:', err);
+    res.status(500).json({ error: 'Google auth failed' });
+  }
+});
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -47,7 +120,10 @@ app.get('/', (req, res) => {
       register: 'POST /api/register',
       login: 'POST /api/login',
       profile: 'GET /api/profile',
-      generate: 'POST /generate'
+      generate: 'POST /generate',
+      feedback: 'POST /api/feedback',
+      googleAuthUrl: 'GET /api/google/auth-url?redirectUri=... (returns URL)',
+      googleVerify: 'POST /api/google/verify'
     }
   });
 });
@@ -161,6 +237,32 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 
 
 
+// Submit feedback (question/suggestion/bug)
+app.post('/api/feedback', authenticateToken, async (req, res) => {
+  try {
+    const { type, message } = req.body;
+    if (!type || !message) {
+      return res.status(400).json({ error: 'Type and message are required' });
+    }
+    const allowed = ['question', 'suggestion', 'bug', 'other'];
+    if (!allowed.includes(type)) {
+      return res.status(400).json({ error: 'Invalid feedback type' });
+    }
+    const user = await User.findById(req.user._id);
+    const feedback = new Feedback({
+      userId: user._id,
+      email: user.email || undefined,
+      type,
+      message
+    });
+    await feedback.save();
+    res.status(201).json({ message: 'Feedback submitted' });
+  } catch (error) {
+    console.error('Feedback submit error:', error);
+    res.status(500).json({ error: 'Failed to submit feedback' });
+  }
+});
+
 // Default item type if none specified
 const DEFAULT_ITEM_TYPE = "item,items, accessory, clothing, shoes, hat, glasses, mask, etc.";
 
@@ -246,11 +348,13 @@ const overlayImage = await fetchImageAsBase64(overlayUrl);
 
 // Updated request to Gemini using the new API structure
 
-const finalprompt = `From the second image, take the ${finalItemType} and apply it to the person in the first image. 
-Replace the person’s existing ${finalItemType} with the new ${finalItemType}, ensuring no parts of the previous ${finalItemType} remain visible. 
+const finalprompt = `From the second image, take the ${finalItemType} and wear it to the person in the first image. 
+Replace the person’s existing ${finalItemType} with the new ${finalItemType}, a complete realistic replacement wihout lokking weird mixing for previous and new , ensuring no parts of the previous remain visible. 
 The ${finalItemType} must fit the body and pose naturally, with realistic draping, proportions, lighting, and shadows consistent with the first image’s environment. 
 The result should be seamless, photorealistic, and free of visual artifacts. 
 Maintain the same aspect ratio as the first input image, with no cropping.`
+
+const finalprompt2 = `carefully and comletrely make person in 1st image wear ${finalItemType} from the second image, repalce it completely,ensuring no parts of the previous remain visible anywhere.`
 
 console.log("Final prompt:", finalprompt);
 
@@ -269,7 +373,7 @@ parts: [
 { inlineData: { mimeType: "image/jpeg", data: overlayImage } },
 
 {
-  text: finalprompt
+  text: finalprompt2
 },
 
 ],
@@ -307,13 +411,32 @@ break;
 
 
 if (!imageBase64) {
+  // Log structured details when Gemini returns no image
+  try {
+    const candidate = result && result.candidates && result.candidates[0];
+    const finishReason = candidate && (candidate.finishReason || candidate.finish_reason);
+    const parts = candidate && candidate.content && candidate.content.parts ? candidate.content.parts : [];
+    const textParts = parts
+      .filter(p => typeof p.text === 'string' && p.text.length > 0)
+      .map(p => p.text);
+    const safety = candidate && (candidate.safetyRatings || candidate.safety_ratings);
+    const promptFeedback = result && (result.promptFeedback || result.prompt_feedback);
+    const apiError = result && result.error;
 
-// Log the full response for debugging if no image is found
+    console.error("Gemini returned no image. Details:");
+    if (finishReason) console.error("- finishReason:", finishReason);
+    if (Array.isArray(textParts) && textParts.length) console.error("- text parts:", textParts.join("\n\n"));
+    if (safety) console.error("- safety info:", JSON.stringify(safety, null, 2));
+    if (promptFeedback) console.error("- promptFeedback:", JSON.stringify(promptFeedback, null, 2));
+    if (apiError) console.error("- api error:", JSON.stringify(apiError, null, 2));
+    // Always log the raw response as a last resort
+    console.error("- raw response:", JSON.stringify(result, null, 2));
+  } catch (logErr) {
+    console.error("Failed to log Gemini no-image details:", logErr);
+    console.error("Raw result:", JSON.stringify(result, null, 2));
+  }
 
-console.error("Gemini response did not contain an image:", JSON.stringify(result, null, 2));
-
-return res.status(500).json({ error: "No image generated by Gemini" });
-
+  return res.status(500).json({ error: "No image generated by Gemini" });
 }
 
 

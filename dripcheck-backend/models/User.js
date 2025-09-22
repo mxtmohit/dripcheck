@@ -24,7 +24,7 @@ const userSchema = new mongoose.Schema({
   },
   tokens: {
     type: Number,
-    default: 0
+    default: 5
   },
   lastLogin: {
     type: Date,
@@ -63,4 +63,4 @@ userSchema.methods.toJSON = function() {
   return user;
 };
 
-export default mongoose.model('User', userSchema);
+export default mongoose.model('User', userSchema)
