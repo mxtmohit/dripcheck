@@ -12,6 +12,13 @@
       // Store the clicked image URL for the extension to use
       const imageUrl = img.src || img.currentSrc || img.getAttribute('src');
       if (imageUrl && !imageUrl.startsWith('data:')) {
+        // Clear previous target marker
+        try {
+          const prevTargets = document.querySelectorAll('img[data-dripcheck-target="1"]');
+          prevTargets.forEach(el => el.removeAttribute('data-dripcheck-target'));
+        } catch (_) {}
+        // Mark current target for robust selection
+        try { img.setAttribute('data-dripcheck-target', '1'); } catch (_) {}
         window.lastClickedImageUrl = imageUrl;
         // Don't try to modify e.target - just stop propagation
         e.stopPropagation();
@@ -29,6 +36,13 @@
       if (img) {
         const imageUrl = img.src || img.currentSrc || img.getAttribute('src');
         if (imageUrl && !imageUrl.startsWith('data:')) {
+          // Clear previous target marker
+          try {
+            const prevTargets = document.querySelectorAll('img[data-dripcheck-target="1"]');
+            prevTargets.forEach(el => el.removeAttribute('data-dripcheck-target'));
+          } catch (_) {}
+          // Mark current target for robust selection
+          try { img.setAttribute('data-dripcheck-target', '1'); } catch (_) {}
           window.lastClickedImageUrl = imageUrl;
           // Don't try to modify e.target - just stop propagation
           e.stopPropagation();

@@ -25,23 +25,28 @@
       }
       
       .header {
-        text-align: center;
         margin-bottom: 24px;
         padding-bottom: 16px;
         border-bottom: 1px solid #f3f4f6;
       }
-      
-      .header-logo {
+      .header-top {
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 12px;
         margin-bottom: 8px;
+        position: relative;
+      }
+      
+      .header-logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
       }
       
       .logo {
-        width: 32px;
-        height: 32px;
+        width: 20px;
+        height: 20px;
         flex-shrink: 0;
         border-radius: 6px;
       }
@@ -92,6 +97,9 @@
         gap: 16px;
         margin-bottom: 16px;
       }
+      .controls-row.single-preview {
+        grid-template-columns: 1fr;
+      }
       
       .controls-row .section {
         margin-bottom: 0;
@@ -126,29 +134,65 @@
       }
       
       #btn { 
-        width: 100%; 
-        height: 40px; 
         font-size: 14px; 
         font-weight: 600; 
         cursor: pointer; 
         border: none; 
-        border-radius: 8px; 
+        border-radius: 10px; 
         transition: all 0.2s ease;
-        margin-bottom: 12px;
         letter-spacing: -0.01em;
+      }
+      /* Compact round button when in header */
+      .header-toggle {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 12px;
+        margin-bottom: 0;
+        font-size: 18px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 2px solid rgba(255,255,255,0.8);
+      }
+      .header-logout {
+        height: 34px;
+        padding: 0 10px;
+        border-radius: 10px;
+        margin-bottom: 0;
+        font-size: 12px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        background: #ef4444;
+        color: #ffffff;
+        border: none;
+        cursor: pointer;
+      }
+      .header-logout:hover {
+        filter: brightness(0.95);
       }
       #btn.on { 
         background: #059669; 
         color: #ffffff; 
-        box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
+        box-shadow: 0 6px 18px rgba(5, 150, 105, 0.35), 0 0 0 3px rgba(5, 150, 105, 0.25);
       }
       #btn.off { 
         background: #dc2626; 
         color: #ffffff; 
-        box-shadow: 0 1px 3px rgba(220, 38, 38, 0.3);
+        box-shadow: 0 6px 18px rgba(220, 38, 38, 0.35), 0 0 0 3px rgba(220, 38, 38, 0.25);
       }
       #btn:hover { 
-        transform: translateY(-1px); 
         box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
       }
       
@@ -293,9 +337,7 @@
       }
       
       .item-type-section {
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid #e5e7eb;
+        margin-top: 8px;
       }
       
       .item-type-label {
@@ -505,6 +547,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        position: relative;
       }
       
       .image-preview img {
@@ -518,7 +561,7 @@
         display: none;
       }
       
-      .image-preview:empty::after {
+      .image-preview::after {
         content: '';
         display: block;
         width: 100%;
@@ -528,6 +571,9 @@
         background-repeat: no-repeat;
         background-position: center;
         border-radius: 8px;
+      }
+      .image-preview.has-image::after {
+        content: none;
       }
       
       .generated-section .image-preview:empty::after {
@@ -626,6 +672,28 @@
         box-shadow: 0 4px 12px rgba(5, 150, 105, 0.4);
       }
       
+      .clear-btn {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: rgba(220, 38, 38, 0.9);
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        width: 28px;
+        height: 28px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+      }
+      .clear-btn:hover {
+        filter: brightness(0.95);
+      }
+      
       .hidden {
         display: none !important;
       }
@@ -635,11 +703,16 @@
     <div class="container">
       <!-- Header -->
       <div class="header">
-        <div class="header-logo">
-          <img src="assets/logo.png" alt="DripCheck Logo" class="logo">
-          <h1>DripCheck</h1>
+        <div class="header-top">
+          <button id="logoutBtn" class="header-logout" aria-label="Logout" title="Logout">Logout</button>
+          <div class="header-logo">
+            <img src="assets/logo.png" alt="DripCheck Logo" class="logo">
+            <h1>DripCheck</h1>
+          </div>
+          <button id="btn" class="off header-toggle" aria-label="Toggle extension" title="Turn On">⏻</button>
         </div>
-        <p class="subtitle">AI-powered Clothes/Accessories Try On</p>
+        <p class="subtitle" style="text-align:center;">AI-powered Clothes/Accessories Try On</p>
+        <div id="statusInfo" class="status-text"></div>
       </div>
 
           <!-- Authentication Section -->
@@ -656,15 +729,9 @@
       <!-- Login/Register Section -->
       <div id="loginSection" class="section">
         <div class="section-title">Account</div>
-        <input id="emailInput" type="email" placeholder="Email address">
-        <input id="passwordInput" type="password" placeholder="Password">
-        <input id="usernameInput" type="text" placeholder="Username (register only)" class="hidden">
-        
         <div class="btn-group">
-          <button id="loginBtn" class="btn btn-primary">Login</button>
-          <button id="registerBtn" class="btn btn-success">Register</button>
+          <button id="googleSignInBtn" class="btn btn-primary" style="width:100%">Continue with Google</button>
         </div>
-        
         <div id="authError" class="error-message hidden"></div>
       </div>
 
@@ -672,64 +739,40 @@
       <div id="mainSection" class="hidden">
         <!-- Controls Row -->
         <div class="controls-row">
-          <!-- Extension Control -->
-          <div class="section">
-            <div class="section-title">Extension Control</div>
-            <button id="btn" class="off">Turn On Extension</button>
-            <div id="statusInfo" class="status-text"></div>
-          </div>
-          
               <!-- Upload Image -->
-              <div class="section">
+              <div class="section full-width">
                 <div class="section-title">Upload Image</div>
+                
+                <!-- Side-by-side previews -->
+                <div id="previewsRow" class="controls-row single-preview">
+                  <div>
+                    <div class="image-preview">
+                      <button id="clearImagesBtn" class="clear-btn" title="Clear images">✕</button>
+                      <img id="imgPreview" alt="No image selected" />
+                    </div>
+                    <div id="previewInfo" class="status-text"></div>
+                  </div>
+                </div>
+
+                
+                
+                <!-- Item Type Override (kept visually close to image) -->
+                <div class="item-type-section">
+                  <label for="itemTypeInput" class="item-type-label">Optional: What item in this image?</label>
+                  <input id="itemTypeInput" type="text" placeholder="e.g. complete outfit, shirt, pants, shoes, hat" class="item-type-input">
+                  <div class="item-type-help">This helps target the specific item to replace in your uploaded image.</div>
+                </div>
+
                 <div class="file-input-wrapper">
                   <input id="file" type="file" accept="image/*">
                   <label for="file" class="file-input-label" id="fileLabel">
                     📁 Choose Image File
                   </label>
                 </div>
-                <div id="previewInfo" class="status-text"></div>
-                
-                <!-- Item Type Override -->
-                <div class="item-type-section">
-                  <label for="itemTypeInput" class="item-type-label">Item Type (Optional)</label>
-                  <input id="itemTypeInput" type="text" placeholder="e.g., shirt, pants, shoes, hat..." class="item-type-input">
-                  <div class="item-type-help">Specify what item to try on if image has multiple items</div>
-                </div>
               </div>
         </div>
         
-        <!-- Image Previews Row -->
-        <div class="controls-row">
-          <!-- Original Image Preview -->
-          <div class="section preview-comparison">
-            <div class="section-title">Original Image</div>
-            <div class="image-preview">
-              <img id="imgPreview" alt="No image selected" />
-            </div>
-          </div>
-
-          <!-- Generated Image Preview -->
-          <div id="generatedSection" class="section preview-comparison hidden">
-            <div class="section-title">Generated Image</div>
-            <div class="image-preview" style="position:relative;">
-              <img id="generatedPreview" alt="No generated image" />
-              <button id="downloadBtn" class="download-btn">Download</button>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Actions Row -->
-        <div class="controls-row">
-          <!-- Image Controls -->
-          <div class="section">
-            <div class="section-title">Image Actions</div>
-            <div class="image-controls">
-              <button id="clearImagesBtn" class="btn btn-danger" style="display:none; width: 100%;">Clear All Images</button>
-            </div>
-          </div>
-          
-          <!-- Coupon Section -->
+        <!-- Coupon Section -->
           <div id="couponSection" class="section hidden">
             <div class="section-title">Redeem Coupon</div>
             <div class="coupon-input-group">
@@ -738,13 +781,38 @@
             </div>
             <div id="couponMessage" class="coupon-message"></div>
           </div>
+
+          <!-- Feedback Section -->
+          <div id="feedbackSection" class="section hidden">
+            <div class="section-title">Questions or Suggestions</div>
+            <div class="form-group">
+              <select id="feedbackType">
+                <option value="question">Question</option>
+                <option value="suggestion">Suggestion</option>
+                <option value="bug">Bug</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <textarea id="feedbackMessage" placeholder="Write your message..." style="width:100%; min-height: 80px; padding:12px; border:1px solid #d1d5db; border-radius:8px; font-family: inherit;"></textarea>
+            </div>
+            <div class="btn-group">
+              <button id="sendFeedbackBtn" class="btn btn-success">Send</button>
+            </div>
+            <div id="feedbackAlert" class="coupon-message"></div>
+          </div>
+
+          <!-- Legal Links Section -->
+          <div class="section" style="text-align: center; padding: 12px;">
+            <div style="font-size: 12px; color: #6b7280; line-height: 1.4;">
+              <a href="#" id="privacyPolicyLink" style="color: #3b82f6; text-decoration: none; margin-right: 16px;">Privacy Policy</a>
+              <a href="#" id="termsOfServiceLink" style="color: #3b82f6; text-decoration: none;">Terms of Service</a>
+            </div>
+          </div>
             </div>
           </div>
           
-          <!-- Logout Button at Bottom -->
-          <div class="logout-section hidden">
-            <button id="logoutBtn" class="logout-btn">Logout</button>
-          </div>
+          
         </div>
         <script src="config.js"></script>
         <script src="popup.js"></script>

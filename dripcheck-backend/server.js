@@ -18,10 +18,7 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dripcheck', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dripcheck')
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
 
@@ -52,11 +49,8 @@ function buildGoogleAuthUrl(redirectUri, state = '', nonce = '') {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-function decodeIdToken(idToken) {
-  const payload = idToken.split('.')[1];
-  const json = Buffer.from(payload, 'base64').toString('utf8');
-  return JSON.parse(json);
-}
+// Note: We do NOT decode/verify ID tokens locally. We verify identity by
+// calling Google's UserInfo endpoint server-side using the client's access token.
 
 // API to get Google auth URL
 app.get('/api/google/auth-url', (req, res) => {
@@ -70,11 +64,25 @@ app.get('/api/google/auth-url', (req, res) => {
 // Verify Google user info and return our JWT
 app.post('/api/google/verify', async (req, res) => {
   try {
-    const { email, name, picture, googleId } = req.body;
-    if (!email) return res.status(400).json({ error: 'Missing email' });
-    
+    const { accessToken } = req.body;
+    if (!accessToken) return res.status(400).json({ error: 'Missing access token' });
+
+    // Verify token server-side by calling Google userinfo
+    const userInfoResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!userInfoResp.ok) {
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+    const userInfo = await userInfoResp.json();
+    const email = userInfo.email;
+    const googleId = userInfo.id;
+    const name = userInfo.name;
+    const picture = userInfo.picture;
+    if (!email) return res.status(400).json({ error: 'Google account has no email' });
+
     const username = name || email.split('@')[0];
-    
+
     // Upsert user by email
     let user = await User.findOne({ email });
     if (!user) {
@@ -85,14 +93,11 @@ app.post('/api/google/verify', async (req, res) => {
         googleId: googleId || null
       });
       await user.save();
-    } else {
-      // Update existing user with Google ID if not set
-      if (!user.googleId && googleId) {
-        user.googleId = googleId;
-        await user.save();
-      }
+    } else if (!user.googleId && googleId) {
+      user.googleId = googleId;
+      await user.save();
     }
-    
+
     // Issue our JWT
     const token = generateToken(user._id);
     res.json({ 
@@ -264,42 +269,30 @@ app.post('/api/feedback', authenticateToken, async (req, res) => {
 });
 
 // Default item type if none specified
-const DEFAULT_ITEM_TYPE = "item,items, accessory, clothing, shoes, hat, glasses, mask, etc.";
+const DEFAULT_ITEM_TYPE = "item, outfit, accessory, clothing, shoes, hat, glasses, mask, etc.";
 
 
 
-// Helper: fetch image and convert to base64
+// Helper: fetch image and convert to base64 WITH mime type
+async function fetchImageAsBase64WithMime(url) {
+  // Data URL (base64)
+  if (url.startsWith('data:')) {
+    const headerAndData = url.split(',');
+    const header = headerAndData[0] || '';
+    const base64Data = headerAndData[1] || '';
+    const mimeMatch = header.match(/^data:([^;]+);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    return { base64: base64Data, mime };
+  }
 
-async function fetchImageAsBase64(url) {
-
-// Check if it's a data URL (base64)
-
-if (url.startsWith('data:')) {
-
-// Extract base64 data from data URL
-
-const base64Data = url.split(',')[1];
-
-return base64Data;
-
-}
-
-
-
-// Otherwise, fetch from URL
-
-const res = await fetch(url);
-
-if (!res.ok) {
-
-throw new Error(`Failed to fetch image: ${res.statusText}`);
-
-}
-
-const buffer = await res.arrayBuffer();
-
-return Buffer.from(buffer).toString("base64");
-
+  // Otherwise, fetch from URL
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch image: ${res.statusText}`);
+  }
+  const contentType = res.headers.get('content-type') || 'image/jpeg';
+  const buffer = await res.arrayBuffer();
+  return { base64: Buffer.from(buffer).toString("base64"), mime: contentType.split(';')[0] };
 }
 
 
@@ -334,52 +327,38 @@ return res.status(400).json({ error: "Missing base or overlay image URL" });
 
 
 
-// Convert images to base64
-
+// Convert images to base64 with accurate mime types
 console.log("Fetching base image...");
-
-const baseImage = await fetchImageAsBase64(baseUrl);
+const { base64: baseImage, mime: baseMime } = await fetchImageAsBase64WithMime(baseUrl);
 
 console.log("Fetching overlay image...");
-
-const overlayImage = await fetchImageAsBase64(overlayUrl);
+const { base64: overlayImage, mime: overlayMime } = await fetchImageAsBase64WithMime(overlayUrl);
 
 
 
 // Updated request to Gemini using the new API structure
 
-const finalprompt = `From the second image, take the ${finalItemType} and wear it to the person in the first image. 
-Replace the person’s existing ${finalItemType} with the new ${finalItemType}, a complete realistic replacement wihout lokking weird mixing for previous and new , ensuring no parts of the previous remain visible. 
-The ${finalItemType} must fit the body and pose naturally, with realistic draping, proportions, lighting, and shadows consistent with the first image’s environment. 
-The result should be seamless, photorealistic, and free of visual artifacts. 
-Maintain the same aspect ratio as the first input image, with no cropping.`
+const finalprompt = `From the second image, take the ${finalItemType} and make the person in the first image wear it. 
+Replace the original ${finalItemType} completely so none of it remains visible. 
+Ensure realistic fit, proportions, draping, lighting, and shadows consistent with the first image. 
+The result must be seamless and photorealistic, without visual artifacts. 
+Maintain the same aspect ratio as the first image with no cropping.`;
 
-const finalprompt2 = `carefully and comletrely make person in 1st image wear ${finalItemType} from the second image, repalce it completely,ensuring no parts of the previous remain visible anywhere.`
+const finalprompt2 = `carefully and completely make person in 1st image wear ${finalItemType} from the second image, replace it completely,ensuring no parts of the previous remain visible anywhere.`
 
-console.log("Final prompt:", finalprompt);
+console.log("Sending request to Gemini AI...");
 
 console.log("Sending request to Gemini AI...");
 
 const result = await ai.models.generateContent({
-
-model: 'gemini-2.5-flash-image-preview',
-
-contents: {
-
-parts: [
-
-{ inlineData: { mimeType: "image/jpeg", data: baseImage } },
-
-{ inlineData: { mimeType: "image/jpeg", data: overlayImage } },
-
-{
-  text: finalprompt2
-},
-
-],
-
-},
-
+  model: 'gemini-2.5-flash-image-preview',
+  contents: {
+    parts: [
+      { inlineData: { mimeType: baseMime || "image/jpeg", data: baseImage } },
+      { inlineData: { mimeType: overlayMime || "image/jpeg", data: overlayImage } },
+      { text: finalprompt2 }
+    ],
+  },
 });
 
 console.log("Gemini AI response received");
@@ -411,32 +390,46 @@ break;
 
 
 if (!imageBase64) {
-  // Log structured details when Gemini returns no image
-  try {
-    const candidate = result && result.candidates && result.candidates[0];
-    const finishReason = candidate && (candidate.finishReason || candidate.finish_reason);
-    const parts = candidate && candidate.content && candidate.content.parts ? candidate.content.parts : [];
-    const textParts = parts
-      .filter(p => typeof p.text === 'string' && p.text.length > 0)
-      .map(p => p.text);
-    const safety = candidate && (candidate.safetyRatings || candidate.safety_ratings);
-    const promptFeedback = result && (result.promptFeedback || result.prompt_feedback);
-    const apiError = result && result.error;
+  // --- START: MODIFIED ERROR HANDLING BLOCK ---
+  let userMessage = "Image generation failed. The model did not return an image.";
+  let statusCode = 500; // Default to Internal Server Error
 
-    console.error("Gemini returned no image. Details:");
-    if (finishReason) console.error("- finishReason:", finishReason);
-    if (Array.isArray(textParts) && textParts.length) console.error("- text parts:", textParts.join("\n\n"));
-    if (safety) console.error("- safety info:", JSON.stringify(safety, null, 2));
-    if (promptFeedback) console.error("- promptFeedback:", JSON.stringify(promptFeedback, null, 2));
-    if (apiError) console.error("- api error:", JSON.stringify(apiError, null, 2));
-    // Always log the raw response as a last resort
-    console.error("- raw response:", JSON.stringify(result, null, 2));
-  } catch (logErr) {
-    console.error("Failed to log Gemini no-image details:", logErr);
-    console.error("Raw result:", JSON.stringify(result, null, 2));
+  try {
+    const candidate = result?.candidates?.[0];
+    const promptFeedback = result?.promptFeedback;
+
+    // Specific block reason (common for safety issues)
+    if (promptFeedback?.blockReason) {
+      userMessage = `Request blocked by the model. Reason: ${promptFeedback.blockReason}.`;
+      statusCode = 422; // Unprocessable Entity
+    }
+    // Candidate finish reason
+    else if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      userMessage = `Image generation stopped. Reason: ${candidate.finishReason}.`;
+      if (candidate.finishReason === 'SAFETY') {
+        statusCode = 422;
+      }
+    }
+    // Model returned text instead of image
+    else {
+      const textParts = candidate?.content?.parts
+        ?.filter(p => typeof p.text === 'string' && p.text.trim())
+        ?.map(p => p.text);
+      if (textParts?.length > 0) {
+        userMessage = `The model provided a text response instead of an image: "${textParts.join(' ')}"`;
+        statusCode = 422;
+      }
+    }
+  } catch (parseError) {
+    console.error("Error parsing Gemini failure response:", parseError);
   }
 
-  return res.status(500).json({ error: "No image generated by Gemini" });
+  // Keep detailed server-side logging for debugging
+  console.error("Gemini returned no image. Full response:", JSON.stringify(result, null, 2));
+
+  // Return user-friendly message
+  return res.status(statusCode).json({ error: "No image generated by Gemini", details: userMessage });
+  // --- END: MODIFIED ERROR HANDLING BLOCK ---
 }
 
 
@@ -452,7 +445,27 @@ try {
   // Don't fail the request if token update fails
 }
 
-res.json({ generatedImage: `data:image/jpeg;base64,${imageBase64}` });
+// Detect image mime type from magic bytes and construct proper data URL
+// Guard: if model returned base image unchanged, treat as failure
+try {
+  if (imageBase64 === baseImage) {
+    return res.status(422).json({
+      error: 'Model returned unedited image',
+      details: 'The generated image matches the uploaded image. Please try again with a different image or adjust the item selection.'
+    });
+  }
+} catch (_) {}
+
+let generatedMime = 'image/jpeg';
+try {
+  // PNG magic bytes start with iVBORw0, JPEG with /9j/
+  if (imageBase64.startsWith('iVBORw0')) {
+    generatedMime = 'image/png';
+  } else if (imageBase64.startsWith('/9j/')) {
+    generatedMime = 'image/jpeg';
+  }
+} catch (_) {}
+res.json({ generatedImage: `data:${generatedMime};base64,${imageBase64}` });
 
 console.log("Image generated successfully, sending response to extension");
 
@@ -493,11 +506,11 @@ app.post('/api/redeem-coupon', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You have already used this coupon' });
     }
 
-    // Add tokens to user
-    await User.findByIdAndUpdate(req.user._id, {
+    // Add tokens to user and return updated balance
+    const updatedUser = await User.findByIdAndUpdate(req.user._id, {
       $inc: { tokens: coupon.tokenAmount },
       $push: { usedCoupons: coupon._id }
-    });
+    }, { new: true });
 
     // Mark coupon as used
     await coupon.use();
@@ -505,7 +518,7 @@ app.post('/api/redeem-coupon', authenticateToken, async (req, res) => {
     res.json({
       message: 'Coupon redeemed successfully!',
       tokensAdded: coupon.tokenAmount,
-      newTokenBalance: req.user.tokens + coupon.tokenAmount
+      newTokenBalance: updatedUser.tokens
     });
 
   } catch (error) {

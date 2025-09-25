@@ -11,41 +11,57 @@ function refreshMenu(enabled) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get({ enabled: false }, ({ enabled }) => refreshMenu(enabled));
-  });
+  // Set default to enabled on first install
+  chrome.storage.local.get({ enabled: true }, ({ enabled }) => refreshMenu(enabled));
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local") {
     // Handle extension enable/disable
     if (changes.enabled) {
-      refreshMenu(Boolean(changes.enabled.newValue));
+      const enabled = Boolean(changes.enabled.newValue);
+      refreshMenu(enabled);
+      if (!enabled) {
+        // Remove any in-page indicators across all tabs when extension turned off
+        try {
+          chrome.tabs.query({}, (tabs) => {
+            tabs.forEach((t) => {
+              if (!t.id) return;
+              chrome.scripting.executeScript({
+                target: { tabId: t.id },
+                func: () => {
+                  const spinner = document.getElementById('dripcheck-spinner-container');
+                  if (spinner) spinner.remove();
+                  const topIndicator = document.getElementById('dripcheck-top-indicator');
+                  if (topIndicator) topIndicator.remove();
+                  const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
+                  imgs.forEach(img => {
+                    const p = img.parentElement;
+                    if (p && p.style.position === 'relative') p.style.position = '';
+                    img.removeAttribute('data-spinner-active');
+                  });
+                }
+              });
+            });
+          });
+        } catch (_) {}
+      }
     }
     
     // Handle user logout - clear any cached data
     if (changes.authToken && !changes.authToken.newValue) {
-      console.log('User logged out - clearing cached data');
       // Clear any cached user-specific data
-      chrome.storage.local.remove(['userImage', 'generatedImage'], () => {
-        console.log('Cached user data cleared from background script');
-      });
+      chrome.storage.local.remove(['userImage', 'generatedImage'], () => {});
     }
   }
 });
 
 // Handle context menu click
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  console.log('Context menu clicked:', info.menuItemId);
   if (info.menuItemId === "replaceImage") {
-    console.log('Replace image clicked, starting process...');
     chrome.storage.local.get({ userImage: null, generatedImage: null, user: null, authToken: null, enabled: false }, ({ userImage, generatedImage, user, authToken, enabled }) => {
       // Always use the original uploaded image as base, never the generated image
       const imageToUse = userImage;
-      
-      console.log('Using base image:', userImage ? 'Original uploaded image' : 'None');
-      console.log('Generated image available:', generatedImage ? 'Yes' : 'No');
-      console.log('User tokens:', user?.tokens || 0);
-      console.log('Auth token:', authToken ? 'Present' : 'Missing');
-      console.log('Extension enabled:', enabled);
       
       // Check if extension is enabled
       if (!enabled) {
@@ -88,7 +104,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       
       // Get the image URL from the right-clicked image
       const imageUrl = info.srcUrl || info.linkUrl;
-      console.log('Using image URL:', imageUrl);
       
       if (!imageUrl) {
         chrome.scripting.executeScript({
@@ -122,6 +137,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           }
           
           // Create top-right fallback indicator (always show)
+          const existingTop = document.getElementById('dripcheck-top-indicator');
+          if (existingTop) existingTop.remove();
           const topRightIndicator = document.createElement('div');
           topRightIndicator.id = 'dripcheck-top-indicator';
           topRightIndicator.style.cssText = `
@@ -161,35 +178,25 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           topRightIndicator.appendChild(text);
           document.body.appendChild(topRightIndicator);
           
-          // Try to find and overlay spinner on the target image
-          const imgs = document.querySelectorAll("img");
-          let targetImg = null;
-          
-          // More robust image finding logic
-          for (let img of imgs) {
-            const imgSrc = img.src || img.currentSrc || img.getAttribute('src') || '';
-            const imgSrcset = img.srcset || '';
-            
-            if (imgSrc === imageUrl || 
-                img.currentSrc === imageUrl || 
-                imgSrcset.includes(imageUrl) ||
-                imgSrc.includes(imageUrl) ||
-                imageUrl.includes(imgSrc) ||
-                // Additional checks for different URL formats
-                decodeURIComponent(imgSrc) === decodeURIComponent(imageUrl) ||
-                imgSrc.replace(/[?#].*/, '') === imageUrl.replace(/[?#].*/, '')) {
-              targetImg = img;
-              break;
-            }
+          // Prefer the explicitly marked target if available
+          let targetImg = document.querySelector('img[data-dripcheck-target="1"]');
+          if (!targetImg) {
+            // Fallback: match by URL heuristics
+            targetImg = document.querySelector(`img[src="${imageUrl}"], img[src*="${imageUrl}"], img[data-src="${imageUrl}"]`) || 
+                         document.querySelector(`img[src="${window.lastClickedImageUrl}"]`) ||
+                         document.querySelector(`img[src*="${window.lastClickedImageUrl}"]`);
           }
           
           if (targetImg) {
-            console.log('Found target image, adding overlay spinner');
             
             // Store original image for restoration if needed
             targetImg.setAttribute('data-original-src', targetImg.src);
             
-            // Create image overlay spinner
+            // Get image dimensions for better positioning
+            const imgRect = targetImg.getBoundingClientRect();
+            const imgParent = targetImg.parentElement;
+            
+            // Create image overlay spinner with improved positioning
             const spinnerContainer = document.createElement('div');
             spinnerContainer.id = 'dripcheck-spinner-container';
             spinnerContainer.style.cssText = `
@@ -206,6 +213,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
               backdrop-filter: blur(2px);
               z-index: 1000;
               border-radius: 4px;
+              pointer-events: none;
             `;
             
             const spinner = document.createElement('div');
@@ -225,26 +233,40 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
               font-size: 13px;
               font-weight: 500;
+              text-align: center;
             `;
             aiText.textContent = 'AI Generating...';
             
             spinnerContainer.appendChild(spinner);
             spinnerContainer.appendChild(aiText);
             
-            // Make image container relative positioned for absolute spinner
-            const imgParent = targetImg.parentElement;
+            // Enhanced parent positioning for Google Images and other complex layouts
             if (imgParent) {
               const computedStyle = window.getComputedStyle(imgParent);
+              
+              // For Google Images g-img elements and similar containers
               if (computedStyle.position === 'static') {
                 imgParent.style.position = 'relative';
               }
+              
+              // Ensure the parent has proper dimensions
+              if (imgParent.offsetWidth === 0 || imgParent.offsetHeight === 0) {
+                imgParent.style.width = imgRect.width + 'px';
+                imgParent.style.height = imgRect.height + 'px';
+              }
+              
+              // Add spinner overlay on top of image
+              targetImg.setAttribute('data-spinner-active', 'true');
+              imgParent.appendChild(spinnerContainer);
+              
+            } else {
+              // Fallback: add directly to image if no suitable parent
+              targetImg.style.position = 'relative';
+              targetImg.setAttribute('data-spinner-active', 'true');
+              targetImg.appendChild(spinnerContainer);
             }
-            
-            // Add spinner overlay on top of image
-            targetImg.setAttribute('data-spinner-active', 'true');
-            targetImg.parentNode.appendChild(spinnerContainer);
           } else {
-            console.log('Target image not found, using top-right indicator only');
+            // no-op if target image not found; top-right indicator remains
           }
         },
         args: [imageUrl]
@@ -258,8 +280,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
   try {
-    console.log('Sending to backend - Base image (uploaded):', userImageDataUrl.substring(0, 50) + '...');
-    console.log('Overlay image (webpage URL):', pageImageUrl);
     
     // Get authentication token and item type
     const { authToken, itemType } = await chrome.storage.local.get(['authToken', 'itemType']);
@@ -377,6 +397,27 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
         });
         return;
       }
+      if (response.status === 422) {
+        // Policy or unedited-image condition from backend
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: (msg) => {
+            const spinnerContainer = document.getElementById('dripcheck-spinner-container');
+            if (spinnerContainer) spinnerContainer.remove();
+            const topIndicator = document.getElementById('dripcheck-top-indicator');
+            if (topIndicator) topIndicator.remove();
+            const imgs = document.querySelectorAll('img[data-spinner-active="true"]');
+            imgs.forEach(img => {
+              const p = img.parentElement;
+              if (p && p.style.position === 'relative') p.style.position = '';
+              img.removeAttribute('data-spinner-active');
+            });
+            alert('Generation blocked: ' + (msg || 'Unprocessable Request'));
+          },
+          args: [errorData?.details || errorData?.error]
+        });
+        return;
+      }
       throw new Error(errorData.error || `Backend error: ${response.status}`);
     }
     
@@ -405,54 +446,41 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
         }
       }
     } catch (error) {
-      console.error('Error refreshing user data:', error);
+      // silent fail on refresh error in background
     }
     
     // Replace the image on the page
     chrome.scripting.executeScript({
       target: { tabId: tabId },
       func: (resultImageDataUrl, originalUrl) => {
-        console.log('Starting image replacement process...');
-        console.log('Looking for URL:', originalUrl);
-        console.log('Stored URL:', window.lastClickedImageUrl);
-        
-        const imgs = document.querySelectorAll("img");
-        console.log('Found', imgs.length, 'images on page');
-        
-        let targetImg = null;
-        
-        // Find the image that was right-clicked using the stored URL
-        const clickedUrl = window.lastClickedImageUrl || originalUrl;
-        console.log('Using clicked URL:', clickedUrl);
-        
-        for (let img of imgs) {
-          console.log('Checking image:', img.src);
-          if (img.src === clickedUrl || 
-              img.currentSrc === clickedUrl || 
-              img.srcset?.includes(clickedUrl) ||
-              img.getAttribute('src') === clickedUrl ||
-              img.src.includes(clickedUrl) ||
-              clickedUrl.includes(img.src)) {
-            targetImg = img;
-            console.log('Found matching image!');
-            break;
+        // Always attempt to remove loading indicators when backend completes
+        const spinnerContainer = document.getElementById('dripcheck-spinner-container');
+        if (spinnerContainer) {
+          spinnerContainer.remove();
+        }
+        const topIndicator = document.getElementById('dripcheck-top-indicator');
+        if (topIndicator) {
+          topIndicator.remove();
+        }
+        const imgsActive = document.querySelectorAll('img[data-spinner-active="true"]');
+        imgsActive.forEach(img => {
+          const p = img.parentElement;
+          if (p && p.style.position === 'relative') {
+            p.style.position = '';
           }
+          img.removeAttribute('data-spinner-active');
+        });
+
+        // Prefer the explicitly marked target if available
+        let targetImg = document.querySelector('img[data-dripcheck-target="1"]');
+        if (!targetImg) {
+          // Fallback to URL-based selection
+          const clickedUrl = window.lastClickedImageUrl || originalUrl;
+          targetImg = document.querySelector(`img[src="${clickedUrl}"], img[src*="${clickedUrl}"], img[data-src="${clickedUrl}"]`) ||
+                      document.querySelector(`img[src="${originalUrl}"], img[src*="${originalUrl}"], img[data-src="${originalUrl}"]`);
         }
         
         if (targetImg) {
-          console.log('Replacing image with generated result...');
-          
-          // Remove all loading indicators
-          const spinnerContainer = document.getElementById('dripcheck-spinner-container');
-          if (spinnerContainer) {
-            spinnerContainer.remove();
-          }
-          
-          const topIndicator = document.getElementById('dripcheck-top-indicator');
-          if (topIndicator) {
-            topIndicator.remove();
-          }
-          
           // Clean up any position changes we made
           const imgParent = targetImg.parentElement;
           if (imgParent && imgParent.style.position === 'relative') {
@@ -466,6 +494,12 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
           // Prevent site-provided responsive sources from swapping our image
           targetImg.removeAttribute('srcset');
           targetImg.removeAttribute('sizes');
+          // Also attempt to clear picture sources to avoid site overrides
+          const picture = targetImg.closest('picture');
+          if (picture) {
+            const sources = picture.querySelectorAll('source');
+            sources.forEach(s => s.removeAttribute('srcset'));
+          }
           
           // Store original dimensions to maintain aspect ratio
           const originalWidth = targetImg.naturalWidth || targetImg.width;
@@ -481,23 +515,9 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
             const originalAspect = originalWidth / originalHeight;
             const generatedAspect = generatedWidth / generatedHeight;
             
-            console.log('=== IMAGE REPLACEMENT DEBUG ===');
-            console.log('Original image dimensions:', originalWidth, 'x', originalHeight);
-            console.log('Original aspect ratio:', originalAspect.toFixed(2));
-            console.log('Generated image dimensions:', generatedWidth, 'x', generatedHeight);
-            console.log('Generated aspect ratio:', generatedAspect.toFixed(2));
-            console.log('Target element current size:', targetImg.offsetWidth, 'x', targetImg.offsetHeight);
-            console.log('Target element computed styles:', {
-              width: window.getComputedStyle(targetImg).width,
-              height: window.getComputedStyle(targetImg).height,
-              objectFit: window.getComputedStyle(targetImg).objectFit
-            });
-            
             // Store the original container dimensions to preserve layout
             const originalContainerWidth = targetImg.offsetWidth;
             const originalContainerHeight = targetImg.offsetHeight;
-            
-            console.log('Original container size:', originalContainerWidth, 'x', originalContainerHeight);
             
             // Apply styles to fit within original bounds without cropping
             targetImg.style.setProperty('object-fit', 'contain', 'important');
@@ -519,31 +539,37 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
               parent.style.setProperty('display', 'block', 'important');
             }
             
-            console.log('Applied container-constrained sizing:', originalContainerWidth, 'x', originalContainerHeight);
-            console.log('Generated image will fit within bounds using object-fit: contain');
-            
-            // Log final computed styles after our changes
-            setTimeout(() => {
-              console.log('Final computed styles after our changes:', {
-                width: window.getComputedStyle(targetImg).width,
-                height: window.getComputedStyle(targetImg).height,
-                objectFit: window.getComputedStyle(targetImg).objectFit,
-                objectPosition: window.getComputedStyle(targetImg).objectPosition
-              });
-              console.log('Final element size:', targetImg.offsetWidth, 'x', targetImg.offsetHeight);
-              console.log('=== END DEBUG ===');
-            }, 100);
           };
           tempImg.src = resultImageDataUrl;
           
+          // Clear explicit target marker if present
+          try { targetImg.removeAttribute('data-dripcheck-target'); } catch (_) {}
           // Mark as replaced for future reference
           targetImg.setAttribute('data-replaced', 'true');
-          // Set the AI-generated result image
-          targetImg.src = resultImageDataUrl;
-          console.log('Image replaced successfully with generated image');
+          // Set the AI-generated result image and enforce it temporarily
+          const desiredSrc = resultImageDataUrl;
+          targetImg.src = desiredSrc;
+          const enforce = () => {
+            // If any lazy loaders try to revert, clear again
+            targetImg.removeAttribute('srcset');
+            targetImg.removeAttribute('sizes');
+            const pic = targetImg.closest('picture');
+            if (pic) {
+              pic.querySelectorAll('source').forEach(s => s.removeAttribute('srcset'));
+            }
+            if (targetImg.src !== desiredSrc) {
+              targetImg.src = desiredSrc;
+            }
+          };
+          targetImg.onload = enforce;
+          // Observe for attribute changes for a short time to fight site scripts
+          const observer = new MutationObserver(() => enforce());
+          observer.observe(targetImg, { attributes: true, attributeFilter: ['src', 'srcset', 'sizes'] });
+          setTimeout(() => {
+            try { observer.disconnect(); } catch (_) {}
+          }, 3000);
         } else {
-          console.error('Could not find target image to replace');
-          console.log('Available image URLs:', Array.from(imgs).map(img => img.src));
+          // silent fail if target image is not found
         }
       },
       args: [result.generatedImage, pageImageUrl]
@@ -552,7 +578,7 @@ async function sendToBackendWithUrl(pageImageUrl, userImageDataUrl, tabId) {
     // Loading indicators are already removed in the image replacement function
     
   } catch (error) {
-    console.error('Backend request failed:', error);
+    // silent in background; user-facing alerts already handled in content context
     
     // Remove loading indicator and show error
      chrome.scripting.executeScript({

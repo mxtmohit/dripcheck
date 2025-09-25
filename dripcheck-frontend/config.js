@@ -5,10 +5,10 @@ const CONFIG = {
   // Backend URL configuration
   // Change this to switch between local and hosted environments
   //BACKEND_URL: 'https://dripcheckbackend-gp37sv5b.b4a.run', // Production URL
-  BACKEND_URL: 'http://localhost:3000', // Local development URL
+  
   
   // Alternative configurations (uncomment to use):
-  // BACKEND_URL: 'http://localhost:3000', // Local development URL
+  BACKEND_URL: 'http://localhost:3000', // Local development URL
   // BACKEND_URL: 'http://127.0.0.1:3000', // Alternative local URL
   
   // API endpoints (these will be constructed using BACKEND_URL)
@@ -16,9 +16,13 @@ const CONFIG = {
     LOGIN: '/api/login',
     REGISTER: '/api/register',
     PROFILE: '/api/profile',
+    FEEDBACK: '/api/feedback',
     REDEEM_COUPON: '/api/redeem-coupon',
-    GENERATE: '/generate'
+    GENERATE: '/generate',
+    GOOGLE_AUTH_URL: '/api/google/auth-url',
+    GOOGLE_VERIFY: '/api/google/verify'
   },
+  
   
   // Helper function to get full API URL
   getApiUrl: function(endpoint) {
@@ -35,9 +39,3 @@ if (typeof window !== 'undefined') {
 if (typeof globalThis !== 'undefined') {
   globalThis.CONFIG = CONFIG;
 }
-
-// Log configuration for debugging
-console.log('DripCheck Config loaded:', {
-  backendUrl: CONFIG.BACKEND_URL,
-  endpoints: CONFIG.ENDPOINTS
-});
