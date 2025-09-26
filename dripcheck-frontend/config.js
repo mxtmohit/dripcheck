@@ -4,11 +4,11 @@
 const CONFIG = {
   // Backend URL configuration
   // Change this to switch between local and hosted environments
-  //BACKEND_URL: 'https://dripcheckbackend-gp37sv5b.b4a.run', // Production URL
+  BACKEND_URL: 'https://dripcheckbackend-gp37sv5b.b4a.run', // Production URL
   
   
   // Alternative configurations (uncomment to use):
-  BACKEND_URL: 'http://localhost:3000', // Local development URL
+  // BACKEND_URL: 'http://localhost:3000', // Local development URL
   // BACKEND_URL: 'http://127.0.0.1:3000', // Alternative local URL
   
   // API endpoints (these will be constructed using BACKEND_URL)
