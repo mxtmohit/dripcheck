@@ -39,9 +39,9 @@ Last updated: [UPDATE DATE]
 
 - The service is not directed to children under 13. Do not use the service if you are under the minimum age in your jurisdiction.
 
-## Contact
+## account deletion
 
-- For privacy questions or requests: [YOUR_EMAIL]
+- To delete your account and data, email the developers or request deletion in help/suggestion/question section
 
 ## Changes to This Policy
 
