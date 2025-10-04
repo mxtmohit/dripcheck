@@ -7,7 +7,9 @@ import dotenv from "dotenv";
 import User from "./models/User.js";
 import Coupon from "./models/Coupon.js";
 import Feedback from "./models/Feedback.js";
+import AdminSettings from "./models/AdminSettings.js";
 import { identifyUser } from "./middleware/auth.js";
+import { globalUsageCheck, recordAIUsage, recordAIFailure, setAIUsageData, setAIError } from "./middleware/globalUsageCheck.js";
 
 dotenv.config();
 
@@ -153,7 +155,7 @@ async function fetchImageAsBase64WithMime(url) {
 
 
 
-app.post("/generate", identifyUser, async (req, res) => {
+app.post("/generate", identifyUser, globalUsageCheck, async (req, res) => {
 try {
   // Check if user has tokens
   if (req.user.tokens <= 0) {
@@ -325,16 +327,22 @@ try {
     generatedMime = 'image/jpeg';
   }
 } catch (_) {}
-res.json({ generatedImage: `data:${generatedMime};base64,${imageBase64}` });
-
-console.log("Image generated successfully, sending response to extension");
+// Record successful AI usage
+const estimatedTokens = 15; // Estimate tokens used for image generation
+setAIUsageData(req, estimatedTokens);
+recordAIUsage(req, res, () => {
+  res.json({ generatedImage: `data:${generatedMime};base64,${imageBase64}` });
+  console.log("Image generated successfully, sending response to extension");
+});
 
 } catch (err) {
-
 console.error("Error during image generation:", err);
 
-res.status(500).json({ error: "Failed to generate image", details: err.message });
-
+// Record failed AI usage
+setAIError(req, err.message);
+recordAIFailure(req, res, () => {
+  res.status(500).json({ error: "Failed to generate image", details: err.message });
+});
 }
 
 });
@@ -384,6 +392,63 @@ app.post('/api/redeem-coupon', identifyUser, async (req, res) => {
   } catch (error) {
     console.error('Coupon redemption error:', error);
     res.status(500).json({ error: 'Failed to redeem coupon' });
+  }
+});
+
+// ==================== ADMIN SETTINGS ENDPOINTS ====================
+
+// Get admin settings (for admin dashboard)
+app.get('/api/admin/settings', async (req, res) => {
+  try {
+    const settings = await AdminSettings.getSettings();
+    res.json(settings);
+  } catch (error) {
+    console.error('Admin settings fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch admin settings' });
+  }
+});
+
+// Update admin settings (for admin dashboard)
+app.put('/api/admin/settings', async (req, res) => {
+  try {
+    const settings = await AdminSettings.getSettings();
+    const updatedSettings = await settings.updateSettings({
+      ...req.body,
+      updatedBy: 'admin' // You could get this from auth token
+    });
+    
+    res.json({ 
+      message: 'Admin settings updated successfully', 
+      settings: updatedSettings 
+    });
+  } catch (error) {
+    console.error('Admin settings update error:', error);
+    res.status(500).json({ error: 'Failed to update admin settings' });
+  }
+});
+
+// Get free token statistics
+app.get('/api/admin/free-token-stats', async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const usersWithFreeTokens = await User.countDocuments({ hasReceivedFreeTokens: true });
+    const totalFreeTokensGiven = await User.aggregate([
+      { $group: { _id: null, total: { $sum: '$freeTokensReceived' } } }
+    ]);
+    
+    const recentFreeTokenUsers = await User.find({ 
+      hasReceivedFreeTokens: true 
+    }).sort({ freeTokensReceivedAt: -1 }).limit(10).select('userId freeTokensReceived freeTokensReceivedAt');
+    
+    res.json({
+      totalUsers,
+      usersWithFreeTokens,
+      totalFreeTokensGiven: totalFreeTokensGiven[0]?.total || 0,
+      recentFreeTokenUsers
+    });
+  } catch (error) {
+    console.error('Free token stats error:', error);
+    res.status(500).json({ error: 'Failed to fetch free token statistics' });
   }
 });
 
