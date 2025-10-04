@@ -7,12 +7,11 @@ import dotenv from "dotenv";
 import User from "./models/User.js";
 import Coupon from "./models/Coupon.js";
 import Feedback from "./models/Feedback.js";
-import { authenticateToken, generateToken } from "./middleware/auth.js";
+import { identifyUser } from "./middleware/auth.js";
 
 dotenv.config();
 
 const app = express();
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -35,85 +34,26 @@ app.get('/health', (req, res) => {
     uptime: process.uptime()
   });
 });
-// Google OAuth helpers
-function buildGoogleAuthUrl(redirectUri, state = '', nonce = '') {
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'token id_token',
-    scope: 'openid email',
-    prompt: 'consent',
-    state,
-    nonce
-  });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-}
 
-// Note: We do NOT decode/verify ID tokens locally. We verify identity by
-// calling Google's UserInfo endpoint server-side using the client's access token.
-
-// API to get Google auth URL
-app.get('/api/google/auth-url', (req, res) => {
-  if (!GOOGLE_CLIENT_ID) return res.status(500).json({ error: 'Google OAuth not configured' });
-  const { redirectUri, state, nonce } = req.query;
-  if (!redirectUri) return res.status(400).json({ error: 'redirectUri required' });
-  const url = buildGoogleAuthUrl(redirectUri, state || '', nonce || '');
-  res.json({ url });
-});
-
-// Verify Google user info and return our JWT
-app.post('/api/google/verify', async (req, res) => {
+// Test database connection
+app.get('/test-db', async (req, res) => {
   try {
-    const { accessToken } = req.body;
-    if (!accessToken) return res.status(400).json({ error: 'Missing access token' });
-
-    // Verify token server-side by calling Google userinfo
-    const userInfoResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    if (!userInfoResp.ok) {
-      return res.status(401).json({ error: 'Invalid Google token' });
-    }
-    const userInfo = await userInfoResp.json();
-    const email = userInfo.email;
-    const googleId = userInfo.id;
-    const name = userInfo.name;
-    const picture = userInfo.picture;
-    if (!email) return res.status(400).json({ error: 'Google account has no email' });
-
-    const username = name || email.split('@')[0];
-
-    // Upsert user by email
-    let user = await User.findOne({ email });
-    if (!user) {
-      user = new User({ 
-        username, 
-        email, 
-        password: Math.random().toString(36).slice(2),
-        googleId: googleId || null
-      });
-      await user.save();
-    } else if (!user.googleId && googleId) {
-      user.googleId = googleId;
-      await user.save();
-    }
-
-    // Issue our JWT
-    const token = generateToken(user._id);
+    const userCount = await User.countDocuments();
     res.json({ 
-      token, 
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        email: user.email, 
-        tokens: user.tokens 
-      } 
+      status: 'OK', 
+      userCount,
+      message: 'Database connection working'
     });
-  } catch (err) {
-    console.error('Google verify failed:', err);
-    res.status(500).json({ error: 'Google auth failed' });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      error: error.message,
+      message: 'Database connection failed'
+    });
   }
 });
+
+
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -122,141 +62,57 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      register: 'POST /api/register',
-      login: 'POST /api/login',
-      profile: 'GET /api/profile',
+      userData: 'POST /api/user-data',
+      profile: 'POST /api/profile',
       generate: 'POST /generate',
       feedback: 'POST /api/feedback',
-      googleAuthUrl: 'GET /api/google/auth-url?redirectUri=... (returns URL)',
-      googleVerify: 'POST /api/google/verify'
+      redeemCoupon: 'POST /api/redeem-coupon'
     }
   });
 });
 
-// Authentication Routes
-app.post('/api/register', async (req, res) => {
+// User Data Route
+app.post('/api/user-data', identifyUser, async (req, res) => {
   try {
-    const { username, email, password } = req.body;
-
-    // Validation
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }]
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists with this email or username' });
-    }
-
-    // Create new user
-    const user = new User({ username, email, password });
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user._id);
-
-    res.status(201).json({
-      message: 'User created successfully',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email
-      }
+    res.json({
+      username: req.user.username,
+      tokens: req.user.tokens,
+      userId: req.user.userId
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Registration failed' });
+    console.error('User data error:', error);
+    res.status(500).json({ error: 'Failed to get user data' });
   }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/profile', identifyUser, async (req, res) => {
   try {
-    const { email, password } = req.body;
-
-    // Validation
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Check password
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user._id);
-
     res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        tokens: user.tokens
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-app.get('/api/profile', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('-password');
-    res.json({
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        tokens: user.tokens,
-        lastLogin: user.lastLogin
-      }
+      username: req.user.username,
+      tokens: req.user.tokens,
+      userId: req.user.userId
     });
   } catch (error) {
     console.error('Profile error:', error);
-    res.status(500).json({ error: 'Failed to fetch profile' });
+    res.status(500).json({ error: 'Failed to get profile' });
   }
 });
 
 
 
 // Submit feedback (question/suggestion/bug)
-app.post('/api/feedback', authenticateToken, async (req, res) => {
+app.post('/api/feedback', identifyUser, async (req, res) => {
   try {
     const { type, message } = req.body;
     if (!type || !message) {
       return res.status(400).json({ error: 'Type and message are required' });
     }
-    const allowed = ['question', 'suggestion', 'bug', 'credits', 'other'];
+    const allowed = ['question', 'suggestion', 'bug', 'other'];
     if (!allowed.includes(type)) {
       return res.status(400).json({ error: 'Invalid feedback type' });
     }
-    const user = await User.findById(req.user._id);
     const feedback = new Feedback({
-      userId: user._id,
-      email: user.email || undefined,
+      userId: req.user.userId,
       type,
       message
     });
@@ -297,7 +153,7 @@ async function fetchImageAsBase64WithMime(url) {
 
 
 
-app.post("/generate", authenticateToken, async (req, res) => {
+app.post("/generate", identifyUser, async (req, res) => {
 try {
   // Check if user has tokens
   if (req.user.tokens <= 0) {
@@ -344,7 +200,7 @@ Ensure realistic fit, proportions, draping, lighting, and shadows consistent wit
 The result must be seamless and photorealistic, without visual artifacts. 
 Maintain the same aspect ratio as the first image with no cropping.`;
 
-const finalprompt2 = `carefully and completely make person in 1st image wear ${finalItemType} from the second image, replace it completely,ensuring no parts of the previous remain visible anywhere.try to keep pose,expression,and body language as close as possible to the first image.`
+const finalprompt2 = `carefully and completely make person in 1st image wear ${finalItemType} from the second image, replace it completely,ensuring no parts of the previous remain visible anywhere.`
 
 console.log("Sending request to Gemini AI...");
 
@@ -440,7 +296,7 @@ if (!imageBase64) {
 
 // Deduct one token from user
 try {
-  await User.findByIdAndUpdate(req.user._id, {
+  await User.findOneAndUpdate({ userId: req.user.userId }, {
     $inc: { tokens: -1 }
   });
   console.log(`User ${req.user.username} token deducted. Remaining tokens: ${req.user.tokens - 1}`);
@@ -485,7 +341,7 @@ res.status(500).json({ error: "Failed to generate image", details: err.message }
 
 
 // Coupon redemption endpoint
-app.post('/api/redeem-coupon', authenticateToken, async (req, res) => {
+app.post('/api/redeem-coupon', identifyUser, async (req, res) => {
   try {
     const { couponCode } = req.body;
     
@@ -511,7 +367,7 @@ app.post('/api/redeem-coupon', authenticateToken, async (req, res) => {
     }
 
     // Add tokens to user and return updated balance
-    const updatedUser = await User.findByIdAndUpdate(req.user._id, {
+    const updatedUser = await User.findOneAndUpdate({ userId: req.user.userId }, {
       $inc: { tokens: coupon.tokenAmount },
       $push: { usedCoupons: coupon._id }
     }, { new: true });
