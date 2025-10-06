@@ -41,9 +41,13 @@ app.get('/health', (req, res) => {
 app.get('/test-db', async (req, res) => {
   try {
     const userCount = await User.countDocuments();
+    const recentUsers = await User.find().sort({ createdAt: -1 }).limit(5).select('userId username tokens ipAddress lastIpAddress createdAt');
+    const unknownIPUsers = await User.find({ $or: [{ ipAddress: 'unknown' }, { lastIpAddress: 'unknown' }] }).select('userId username ipAddress lastIpAddress');
     res.json({ 
       status: 'OK', 
       userCount,
+      recentUsers,
+      unknownIPUsers,
       message: 'Database connection working'
     });
   } catch (error) {
@@ -66,12 +70,29 @@ app.get('/', (req, res) => {
       health: '/health',
       userData: 'POST /api/user-data',
       profile: 'POST /api/profile',
+      setUsername: 'POST /api/set-username',
       generate: 'POST /generate',
       feedback: 'POST /api/feedback',
       redeemCoupon: 'POST /api/redeem-coupon'
     }
   });
 });
+
+// Middleware: require a non-default username before using protected features
+function requireUsernameSet(req, res, next) {
+  try {
+    const name = (req.user && req.user.username) || '';
+    if (!name || name === 'User') {
+      return res.status(400).json({
+        error: 'Username required',
+        message: 'Please set a username before using this feature',
+      });
+    }
+    next();
+  } catch (e) {
+    return res.status(500).json({ error: 'Username validation failed' });
+  }
+}
 
 // User Data Route
 app.post('/api/user-data', identifyUser, async (req, res) => {
@@ -100,10 +121,61 @@ app.post('/api/profile', identifyUser, async (req, res) => {
   }
 });
 
+// Set or update unique username
+app.post('/api/set-username', identifyUser, async (req, res) => {
+  try {
+    console.log('DripCheck: Set username request:', req.body);
+    console.log('DripCheck: User from identifyUser:', req.user);
+    
+    let { username } = req.body;
+    if (typeof username !== 'string') {
+      console.log('DripCheck: Username validation failed - not string');
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    username = username.trim();
+    if (username.length < 3 || username.length > 30) {
+      console.log('DripCheck: Username validation failed - length:', username.length);
+      return res.status(400).json({ error: 'Username must be 3-30 characters' });
+    }
+    const valid = /^[A-Za-z0-9_\.\-]+$/.test(username);
+    if (!valid) {
+      console.log('DripCheck: Username validation failed - invalid characters');
+      return res.status(400).json({ error: 'Only letters, numbers, underscore, dot, hyphen allowed' });
+    }
+    // Enforce case-insensitive uniqueness
+    const existing = await User.findOne({ username: { $regex: new RegExp('^' + username + '$', 'i') } });
+    if (existing && existing.userId !== req.user.userId) {
+      console.log('DripCheck: Username already taken by:', existing.userId);
+      return res.status(409).json({ error: 'Username already taken' });
+    }
+    
+    console.log('DripCheck: Updating username for user:', req.user.userId);
+    req.user.username = username;
+    try {
+      await req.user.save();
+      console.log('DripCheck: Username updated successfully');
+      return res.json({ message: 'Username updated', userId: req.user.userId, username: req.user.username, tokens: req.user.tokens });
+    } catch (saveError) {
+      if (saveError.code === 11000 && saveError.keyPattern && saveError.keyPattern.email) {
+        console.error('DripCheck: Database has legacy email index - please drop email_1 index');
+        return res.status(500).json({ 
+          error: 'Database configuration error', 
+          message: 'Please contact administrator to fix database indexes' 
+        });
+      }
+      throw saveError;
+    }
+  } catch (error) {
+    console.error('DripCheck: Set username error:', error);
+    console.error('DripCheck: Error details:', error.message);
+    return res.status(500).json({ error: 'Failed to update username' });
+  }
+});
+
 
 
 // Submit feedback (question/suggestion/bug)
-app.post('/api/feedback', identifyUser, async (req, res) => {
+app.post('/api/feedback', identifyUser, requireUsernameSet, async (req, res) => {
   try {
     const { type, message } = req.body;
     if (!type || !message) {
@@ -155,11 +227,38 @@ async function fetchImageAsBase64WithMime(url) {
 
 
 
-app.post("/generate", identifyUser, globalUsageCheck, async (req, res) => {
+app.post("/generate", identifyUser, requireUsernameSet, globalUsageCheck, async (req, res) => {
 try {
   // Check if user has tokens
   if (req.user.tokens <= 0) {
     return res.status(402).json({ error: "No tokens remaining. Please purchase more tokens." });
+  }
+
+  // Check IP request limits
+  try {
+    const adminSettings = await AdminSettings.getSettings();
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+                    req.headers['x-real-ip'] || 
+                    req.connection?.remoteAddress || 
+                    req.socket?.remoteAddress || 
+                    req.ip || 'unknown';
+    
+    const ipLimitCheck = await User.checkIPRequestLimits(clientIP, adminSettings);
+    if (!ipLimitCheck.allowed) {
+      console.log(`DripCheck: IP request limit exceeded for ${clientIP}: ${ipLimitCheck.reason}`);
+      return res.status(429).json({
+        error: 'Request limit exceeded',
+        message: ipLimitCheck.reason,
+        currentCount: ipLimitCheck.currentCount,
+        maxAllowed: ipLimitCheck.maxAllowed
+      });
+    }
+    
+    // Increment request count for this user
+    await req.user.incrementRequestCount();
+    console.log(`DripCheck: IP request count updated for ${clientIP}`);
+  } catch (ipLimitError) {
+    console.warn('DripCheck: IP limit check failed, proceeding:', ipLimitError.message);
   }
 
   console.log(`User ${req.user.username} has ${req.user.tokens} tokens, generating image...`);
@@ -349,7 +448,7 @@ recordAIFailure(req, res, () => {
 
 
 // Coupon redemption endpoint
-app.post('/api/redeem-coupon', identifyUser, async (req, res) => {
+app.post('/api/redeem-coupon', identifyUser, requireUsernameSet, async (req, res) => {
   try {
     const { couponCode } = req.body;
     
